@@ -39,8 +39,8 @@ class MobileSessionStore(context: Context) {
 }
 
 object MobileApiClient {
-    fun create(sessionStore: MobileSessionStore): FieldReadingApi {
-        val baseUrl = BuildConfig.POWERHUB_API_BASE_URL.trim()
+    fun create(sessionStore: MobileSessionStore, configuredBaseUrl: String = BuildConfig.POWERHUB_API_BASE_URL): FieldReadingApi {
+        val baseUrl = configuredBaseUrl.trim()
         require(baseUrl.startsWith("https://") || baseUrl.startsWith("http://")) { "عنوان PowerHub API غير مهيأ" }
         val authInterceptor = Interceptor { chain ->
             val request = chain.request().newBuilder().apply {

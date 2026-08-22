@@ -12,6 +12,7 @@ import com.example.data.api.MobileApiClient
 import com.example.data.api.MobileLoginRequest
 import com.example.data.api.MobileReadingRequest
 import com.example.data.api.MobileSessionStore
+import com.example.data.api.RemoteConfigRepository
 import kotlinx.coroutines.flow.Flow
 import retrofit2.HttpException
 import java.io.File
@@ -32,9 +33,10 @@ data class SyncSummary(
 class FieldReadingRepository(
     private val context: Context,
     private val dao: FieldReadingDao,
-    private val sessionStore: MobileSessionStore = MobileSessionStore(context),
-    private val api: FieldReadingApi = MobileApiClient.create(sessionStore)
+    private val sessionStore: MobileSessionStore = MobileSessionStore(context)
 ) {
+    private val remoteConfig = RemoteConfigRepository(context)
+    private var api: FieldReadingApi = MobileApiClient.create(sessionStore, remoteConfig.activeApiUrl())
     private val prefs = context.getSharedPreferences("field_reading_prefs", Context.MODE_PRIVATE)
 
     fun isLoggedIn(): Boolean = sessionStore.isLoggedIn()
@@ -45,12 +47,20 @@ class FieldReadingRepository(
     private fun activeBranchId(): Long = prefs.getLong("active_branch_id", -1L)
 
     private suspend fun ensureActiveAccessToken() {
+        refreshApiBaseUrl()
         if (!sessionStore.needsAccessRefresh()) return
         val refreshToken = sessionStore.refreshToken() ?: throw IllegalStateException("انتهت جلسة الموبايل. سجّل الدخول مجدداً.")
         sessionStore.save(api.refresh(com.example.data.api.MobileRefreshRequest(refreshToken)))
     }
 
+    private suspend fun refreshApiBaseUrl() {
+        if (remoteConfig.refreshIfNeeded().getOrDefault(false)) {
+            api = MobileApiClient.create(sessionStore, remoteConfig.activeApiUrl())
+        }
+    }
+
     suspend fun login(email: String, password: String, remember: Boolean): Result<Unit> = runCatching {
+        refreshApiBaseUrl()
         val session = api.login(MobileLoginRequest(email = email.trim().lowercase(), password = password, deviceLabel = "Android Field Reader"))
         sessionStore.save(session)
         prefs.edit().apply {

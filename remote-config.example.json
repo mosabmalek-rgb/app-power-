@@ -1,0 +1,5 @@
+{
+  "config_version": 1,
+  "api_base_url": "https://temporary-powerhub-host.example/",
+  "signature": "BASE64_ED25519_SIGNATURE_OF_config_version_NEWLINE_api_base_url"
+}

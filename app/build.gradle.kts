@@ -27,7 +27,11 @@ android {
     versionCode = 2
     versionName = "1.1.0"
     val apiBaseUrl = project.providers.gradleProperty("POWERHUB_API_BASE_URL").orElse("https://powerhub.example.invalid/").get()
+    val remoteConfigUrl = project.providers.gradleProperty("POWERHUB_REMOTE_CONFIG_URL").orElse("").get()
+    val remoteConfigPublicKey = project.providers.gradleProperty("POWERHUB_REMOTE_CONFIG_PUBLIC_KEY").orElse("").get()
     buildConfigField("String", "POWERHUB_API_BASE_URL", "\"$apiBaseUrl\"")
+    buildConfigField("String", "POWERHUB_REMOTE_CONFIG_URL", "\"$remoteConfigUrl\"")
+    buildConfigField("String", "POWERHUB_REMOTE_CONFIG_PUBLIC_KEY", "\"$remoteConfigPublicKey\"")
 
     testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
   }
@@ -122,6 +126,7 @@ dependencies {
   implementation(libs.androidx.room.runtime)
   implementation(libs.androidx.security.crypto)
   implementation(libs.androidx.work.runtime.ktx)
+  implementation(libs.eddsa)
   implementation(libs.coil.compose)
   implementation(libs.converter.moshi)
   implementation(libs.firebase.ai)

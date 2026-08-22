@@ -30,6 +30,28 @@
 
 لا تضع كلمات مرور أو مفاتيح Supabase أو مفاتيح خدمة داخل التطبيق أو ملفات Gradle. يستخدم التطبيق عنوان API فقط، بينما تتم المصادقة عبر مسارات PowerHub المخصصة للموبايل.
 
+## التهيئة البعيدة لتغيير الدومين
+
+يدعم التطبيق ملف JSON ثابتاً عبر HTTPS، مثل رابط **Raw GitHub Gist**. عند كل تشغيل أو مزامنة، يتحقق التطبيق من الملف كل 30 دقيقة، ويحتفظ بآخر عنوان صالح محلياً إذا انقطع الإنترنت. يجب أن يتضمن الملف توقيع Ed25519 للحمولة `config_version + "\n" + api_base_url`؛ لا يقبل التطبيق أي ملف غير موقّع أو لا يطابق مفتاح التحقق المضمّن في APK. استخدم القالب `remote-config.example.json`، ثم مرر رابط الملف الخام ومفتاحه العام عند بناء الإصدار الأول:
+
+```bash
+./gradlew assembleRelease \
+  -PPOWERHUB_API_BASE_URL=https://temporary-powerhub-host.example/ \
+  -PPOWERHUB_REMOTE_CONFIG_URL=https://gist.githubusercontent.com/OWNER/GIST_ID/raw/powerhub-mobile-config.json \
+  -PPOWERHUB_REMOTE_CONFIG_PUBLIC_KEY=BASE64_ED25519_PUBLIC_KEY
+```
+
+> يجب أن تكون قيمة `api_base_url` هي **جذر الموقع فقط** مثل `https://powerhub.example.com/`، وليس `.../api/`؛ لأن مسارات الموبايل تتضمن `/api/mobile/v1` تلقائياً. عند شراء الدومين، عدّل قيمة `api_base_url` في Gist فقط. لا تنشئ التطبيق ملف تهيئة غير صالح أو غير HTTPS، وتبقى آخر تهيئة صالحة محفوظة عند تعذر الوصول إلى Gist.
+
+لتوقيع الملف بعد تغيير العنوان، احفظ المفتاح الخاص خارج المستودع ثم استخدم:
+
+```bash
+POWERHUB_REMOTE_CONFIG_PRIVATE_KEY=/secure/path/remote-config-ed25519-private.pem \
+  ./scripts/sign-remote-config.sh 2 https://powerhub.example.com/ > powerhub-mobile-config.json
+```
+
+ارفع محتوى `powerhub-mobile-config.json` الناتج إلى Gist نفسه. لا ترفع المفتاح الخاص إلى Gist أو GitHub، ولا تغيّر المفتاح العام المدمج في APK؛ تغيير المفتاح العام يتطلب إصدار APK جديداً لأسباب أمنية.
+
 ## إصدار APK موقّع
 
 لا يقبل البناء من نوع Release عنواناً تجريبياً أو توقيعاً افتراضياً. احتفظ بملف المفتاح وكلمات مروره خارج GitHub، ثم اضبط متغيرات البيئة الآتية داخل جلسة البناء فقط:
