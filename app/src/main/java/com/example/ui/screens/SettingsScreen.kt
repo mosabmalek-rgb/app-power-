@@ -99,11 +99,11 @@ fun SettingsScreen(
 
                     Divider(modifier = Modifier.padding(vertical = 16.dp))
 
-                    DetailRow(label = "رمز الموظف الميداني", value = "EMP-90342")
+                    DetailRow(label = "حالة المستخدم الميداني", value = "مفعّل عبر PowerHub")
                     DetailRow(label = "شركة المولدات التابع لها", value = companyName)
-                    DetailRow(label = "الأفرع المرخصة للعمل", value = "فرع الرياض، فرع جدة")
-                    DetailRow(label = "رقم الجوال الفني", value = "+966 50 123 4567")
-                    DetailRow(label = "صلاحية الفواتير والتحصيل", value = "نعم (كاملة)")
+                    DetailRow(label = "الأفرع المرخصة للعمل", value = "تُحدَّد تلقائياً من حساب PowerHub")
+                    DetailRow(label = "بيانات الاتصال", value = "محفوظة بشكل محمي في الحساب")
+                    DetailRow(label = "صلاحية التحصيل", value = "غير متاحة في تطبيق القراءات")
                 }
             }
 

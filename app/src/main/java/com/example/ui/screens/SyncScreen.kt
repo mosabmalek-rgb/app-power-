@@ -26,14 +26,12 @@ fun SyncScreen(
     onBack: () -> Unit
 ) {
     val pendingReadings by viewModel.pendingReadings.collectAsState()
-    val pendingPayments by viewModel.pendingPayments.collectAsState()
     val syncProgress by viewModel.syncProgress.collectAsState()
     val syncStatusMessage by viewModel.syncStatusMessage.collectAsState()
     val isSyncing by viewModel.isSyncing.collectAsState()
 
     val pendingReadingsCount = pendingReadings.filter { it.status == "pending" }.size
-    val pendingPaymentsCount = pendingPayments.filter { it.status == "pending" }.size
-    val totalPending = pendingReadingsCount + pendingPaymentsCount
+    val totalPending = pendingReadingsCount
 
     Scaffold(
         topBar = {
@@ -76,7 +74,6 @@ fun SyncScreen(
                     Divider()
 
                     SyncQueueRow(label = "عدد قراءات العدادات المعلقة", value = pendingReadingsCount.toString(), color = MaterialTheme.colorScheme.primary)
-                    SyncQueueRow(label = "عدد دفعات التحصيل المعلقة", value = pendingPaymentsCount.toString(), color = MaterialTheme.colorScheme.secondary)
                     SyncQueueRow(label = "عدد الصور والملفات المرفقة", value = pendingReadings.filter { it.photoPath != null && it.status == "pending" }.size.toString(), color = MaterialTheme.colorScheme.tertiary)
                     
                     Divider()

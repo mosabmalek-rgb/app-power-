@@ -22,7 +22,6 @@ import com.example.ui.FieldReadingViewModel
 fun SubscriberDetailScreen(
     viewModel: FieldReadingViewModel,
     onNavigateToAddReading: () -> Unit,
-    onNavigateToAddPayment: () -> Unit,
     onBack: () -> Unit
 ) {
     val subscriber by viewModel.selectedSubscriber.collectAsState()
@@ -164,21 +163,6 @@ fun SubscriberDetailScreen(
                         Text("قيد قراءة جديدة", fontWeight = FontWeight.Bold, fontSize = 14.sp)
                     }
 
-                    Button(
-                        onClick = onNavigateToAddPayment,
-                        modifier = Modifier
-                            .weight(1f)
-                            .height(52.dp)
-                            .testTag("action_add_payment"),
-                        shape = RoundedCornerShape(12.dp),
-                        colors = ButtonDefaults.buttonColors(
-                            containerColor = MaterialTheme.colorScheme.secondary
-                        )
-                    ) {
-                        Icon(Icons.Default.Payment, contentDescription = null)
-                        Spacer(modifier = Modifier.width(6.dp))
-                        Text("تحصيل مالي", fontWeight = FontWeight.Bold, fontSize = 14.sp)
-                    }
                 }
 
                 // Operations History List Header
@@ -231,24 +215,6 @@ fun SubscriberDetailScreen(
                         }
                     }
 
-                    // Display Payments local logs
-                    if (subPayments.isNotEmpty()) {
-                        Text(
-                            text = "التحصيلات غير المزامنة:",
-                            style = MaterialTheme.typography.titleSmall,
-                            fontWeight = FontWeight.Bold,
-                            color = MaterialTheme.colorScheme.secondary
-                        )
-                        subPayments.forEach { payment ->
-                            HistoryItem(
-                                title = "تحصيل دفعة بقيمة: ${payment.amount} ريال",
-                                date = java.text.SimpleDateFormat("yyyy-MM-dd HH:mm", java.util.Locale.getDefault()).format(java.util.Date(payment.createdAt)),
-                                status = payment.status,
-                                isReading = false,
-                                extra = if (payment.paymentMethod == "CASH") "نقدي" else "تحويل بنكي"
-                            )
-                        }
-                    }
                 }
 
                 Spacer(modifier = Modifier.height(24.dp))

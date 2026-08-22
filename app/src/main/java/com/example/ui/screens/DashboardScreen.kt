@@ -38,12 +38,10 @@ fun DashboardScreen(
     val userRole by viewModel.userRole.collectAsState()
     val companyName by viewModel.companyName.collectAsState()
     val pendingReadings by viewModel.pendingReadings.collectAsState()
-    val pendingPayments by viewModel.pendingPayments.collectAsState()
     val subscribers by viewModel.subscribers.collectAsState()
 
     val pendingReadingsCount = pendingReadings.filter { it.status == "pending" }.size
-    val pendingPaymentsCount = pendingPayments.filter { it.status == "pending" }.size
-    val totalPending = pendingReadingsCount + pendingPaymentsCount
+    val totalPending = pendingReadingsCount
 
     // Calculate readings done today
     val todayDateString = java.text.SimpleDateFormat("yyyy-MM-dd", java.util.Locale.getDefault()).format(java.util.Date())

@@ -71,20 +71,12 @@ class MainActivity : ComponentActivity() {
                 SubscriberDetailScreen(
                   viewModel = viewModel,
                   onNavigateToAddReading = { navController.navigate("add_reading") },
-                  onNavigateToAddPayment = { navController.navigate("add_payment") },
                   onBack = { navController.popBackStack() }
                 )
               }
 
               composable("add_reading") {
                 AddReadingScreen(
-                  viewModel = viewModel,
-                  onBack = { navController.popBackStack() }
-                )
-              }
-
-              composable("add_payment") {
-                RecordPaymentScreen(
                   viewModel = viewModel,
                   onBack = { navController.popBackStack() }
                 )
