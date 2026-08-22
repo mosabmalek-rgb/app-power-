@@ -30,8 +30,10 @@ fun SyncScreen(
     val syncStatusMessage by viewModel.syncStatusMessage.collectAsState()
     val isSyncing by viewModel.isSyncing.collectAsState()
 
-    val pendingReadingsCount = pendingReadings.filter { it.status == "pending" }.size
-    val totalPending = pendingReadingsCount
+    val pendingReadingsCount = pendingReadings.count { it.status == "pending" || it.status == "syncing" }
+    val retryableReadings = pendingReadings.filter { it.status == "retryable" }
+    val needsReviewReadings = pendingReadings.filter { it.status == "needs_review" }
+    val totalPending = pendingReadingsCount + retryableReadings.size + needsReviewReadings.size
 
     Scaffold(
         topBar = {
@@ -74,7 +76,9 @@ fun SyncScreen(
                     Divider()
 
                     SyncQueueRow(label = "عدد قراءات العدادات المعلقة", value = pendingReadingsCount.toString(), color = MaterialTheme.colorScheme.primary)
-                    SyncQueueRow(label = "عدد الصور والملفات المرفقة", value = pendingReadings.filter { it.photoPath != null && it.status == "pending" }.size.toString(), color = MaterialTheme.colorScheme.tertiary)
+                    SyncQueueRow(label = "إعادة محاولة تلقائية", value = retryableReadings.size.toString(), color = MaterialTheme.colorScheme.tertiary)
+                    SyncQueueRow(label = "تحتاج مراجعة الفني", value = needsReviewReadings.size.toString(), color = MaterialTheme.colorScheme.error)
+                    SyncQueueRow(label = "عدد الصور والملفات المرفقة", value = pendingReadings.count { it.photoPath != null && it.status != "synced" }.toString(), color = MaterialTheme.colorScheme.secondary)
                     
                     Divider()
 
@@ -135,6 +139,35 @@ fun SyncScreen(
                 }
             }
 
+            if (needsReviewReadings.isNotEmpty()) {
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(12.dp),
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.errorContainer)
+                ) {
+                    Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                        Text("قراءات تحتاج مراجعة قبل الإرسال", fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onErrorContainer)
+                        needsReviewReadings.forEach { reading ->
+                            Column(modifier = Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                                Text("المشترك #${reading.subscriberId} — قراءة ${reading.currentReading}", fontWeight = FontWeight.SemiBold, fontSize = 12.sp)
+                                Text(reading.lastError ?: "تعذر تحديد سبب الفشل.", fontSize = 11.sp)
+                                Text("محاولات الإرسال: ${reading.retryCount}", fontSize = 11.sp)
+                                OutlinedButton(
+                                    onClick = { viewModel.requeueReadingForReview(reading.localId) },
+                                    enabled = !isSyncing,
+                                    modifier = Modifier.testTag("requeue_reading_${reading.localId}")
+                                ) {
+                                    Icon(Icons.Default.Refresh, contentDescription = null, modifier = Modifier.size(16.dp))
+                                    Spacer(modifier = Modifier.width(6.dp))
+                                    Text("إعادة إدراج في الطابور")
+                                }
+                            }
+                            HorizontalDivider()
+                        }
+                    }
+                }
+            }
+
             // Progress Indicators
             AnimatedVisibility(visible = isSyncing || syncStatusMessage.isNotEmpty()) {
                 Card(
@@ -190,7 +223,8 @@ fun SyncScreen(
                     Text("قواعد المزامنة السحابية:", fontWeight = FontWeight.Bold, fontSize = 12.sp)
                     BulletPoint("يمكنك الاستمرار بالعمل وتسجيل القراءات في الميدان دون توفر اتصال بالإنترنت.")
                     BulletPoint("يتم تخزين القراءات مع صورها والموقع الجغرافي بالكامل في قاعدة البيانات الآمنة المدمجة بالتطبيق.")
-                    BulletPoint("فور توفر الإنترنت، يوصى بالضغط على المزامنة لترحيل البيانات لمدير النظام ومحاسب المنشأة فورا.")
+                    BulletPoint("فور توفر الإنترنت، يحاول التطبيق المزامنة في الخلفية مع تدرج آمن لإعادة المحاولة، ويمكنك تشغيلها يدوياً في أي وقت.")
+                    BulletPoint("تظل أخطاء الصلاحية أو البيانات محفوظة للمراجعة ولا تُحذف القراءة من الجهاز حتى تتأكد مزامنتها أو تعيد إدراجها بنفسك.")
                 }
             }
 

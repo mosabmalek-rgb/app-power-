@@ -13,7 +13,7 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         PendingReadingEntity::class,
         PendingPaymentEntity::class
     ],
-    version = 2,
+    version = 3,
     exportSchema = false
 )
 abstract class FieldReadingDatabase : RoomDatabase() {
@@ -23,6 +23,14 @@ abstract class FieldReadingDatabase : RoomDatabase() {
         private val MIGRATION_1_2 = object : Migration(1, 2) {
             override fun migrate(db: SupportSQLiteDatabase) {
                 db.execSQL("ALTER TABLE subscribers ADD COLUMN meterId TEXT NOT NULL DEFAULT ''")
+            }
+        }
+
+        private val MIGRATION_2_3 = object : Migration(2, 3) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE pending_readings ADD COLUMN retryCount INTEGER NOT NULL DEFAULT 0")
+                db.execSQL("ALTER TABLE pending_readings ADD COLUMN lastError TEXT")
+                db.execSQL("ALTER TABLE pending_readings ADD COLUMN lastAttemptAt INTEGER")
             }
         }
 
@@ -36,7 +44,7 @@ abstract class FieldReadingDatabase : RoomDatabase() {
                     FieldReadingDatabase::class.java,
                     "field_reading_database"
                 )
-                .addMigrations(MIGRATION_1_2)
+                .addMigrations(MIGRATION_1_2, MIGRATION_2_3)
                 .build()
                 INSTANCE = instance
                 instance

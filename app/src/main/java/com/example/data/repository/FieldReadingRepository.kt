@@ -3,6 +3,7 @@ package com.example.data.repository
 import android.content.Context
 import android.util.Base64
 import com.example.data.FieldReadingDao
+import com.example.data.OfflineSyncPolicy
 import com.example.data.PendingPaymentEntity
 import com.example.data.PendingReadingEntity
 import com.example.data.SubscriberEntity
@@ -12,11 +13,21 @@ import com.example.data.api.MobileLoginRequest
 import com.example.data.api.MobileReadingRequest
 import com.example.data.api.MobileSessionStore
 import kotlinx.coroutines.flow.Flow
-import java.text.SimpleDateFormat
+import retrofit2.HttpException
 import java.io.File
+import java.io.IOException
+import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 import java.util.TimeZone
+
+data class SyncSummary(
+    val synced: Int,
+    val retryable: Int,
+    val needsReview: Int
+) {
+    fun message(): String = "تمت مزامنة $synced قراءة. بقيت $retryable قراءة ستُعاد محاولتها تلقائياً، و$needsReview قراءة تحتاج مراجعة الفني."
+}
 
 class FieldReadingRepository(
     private val context: Context,
@@ -92,19 +103,20 @@ class FieldReadingRepository(
         })
     }
 
-    suspend fun syncAllData(onProgress: (Int, String) -> Unit): Result<String> = runCatching {
+    suspend fun syncAllData(onProgress: (Int, String) -> Unit): Result<SyncSummary> = runCatching {
         ensureActiveAccessToken()
         val branchId = activeBranchId()
         if (branchId <= 0) throw IllegalStateException("حدّث قائمة المشتركين أولاً لتحديد الفرع المسموح.")
-        val readings = dao.getPendingReadingsWithStatus("pending") + dao.getPendingReadingsWithStatus("failed")
-        if (readings.isEmpty()) return@runCatching "لا توجد قراءات معلقة للمزامنة."
+        val readings = dao.getPendingReadingsWithStatus("pending") + dao.getPendingReadingsWithStatus("retryable")
+        if (readings.isEmpty()) return@runCatching SyncSummary(0, 0, 0)
         var synced = 0
-        var failed = 0
+        var retryable = 0
+        var needsReview = 0
         readings.forEachIndexed { index, reading ->
             onProgress(((index * 100) / readings.size).coerceAtLeast(5), "جارٍ إرسال قراءة ${index + 1} من ${readings.size}…")
             try {
-                dao.updateReadingStatus(reading.localId, "syncing")
-                val image = reading.photoPath?.let { loadImagePayload(it) }
+                dao.updateReadingSyncState(reading.localId, "syncing", reading.retryCount, null, System.currentTimeMillis())
+                val image = reading.photoPath?.let { loadImagePayload(it) ?: throw PermanentSyncException("تعذر العثور على صورة العداد أو تجاوزت 5 ميغابايت.") }
                 val response = api.createReading(MobileReadingRequest(
                     clientOperationId = reading.clientReferenceId,
                     branchId = branchId,
@@ -121,20 +133,29 @@ class FieldReadingRepository(
                     imageMime = image?.second,
                     notes = reading.notes.ifBlank { null }
                 ))
-                if (response.id > 0) { dao.updateReadingStatus(reading.localId, "synced"); synced++ } else { dao.updateReadingStatus(reading.localId, "failed"); failed++ }
-            } catch (_: Exception) {
-                dao.updateReadingStatus(reading.localId, "failed")
-                failed++
+                if (response.id > 0) {
+                    dao.updateReadingSyncState(reading.localId, "synced", reading.retryCount, null, System.currentTimeMillis())
+                    synced++
+                } else {
+                    dao.updateReadingSyncState(reading.localId, "retryable", reading.retryCount + 1, "رفض الخادم تأكيد القراءة؛ ستُعاد المحاولة تلقائياً.", System.currentTimeMillis())
+                    retryable++
+                }
+            } catch (error: Exception) {
+                val issue = classifySyncFailure(error)
+                dao.updateReadingSyncState(reading.localId, issue.status, reading.retryCount + 1, issue.message, System.currentTimeMillis())
+                if (issue.status == "needs_review") needsReview++ else retryable++
             }
         }
-        onProgress(100, "اكتمل إرسال القراءات: $synced ناجحة، $failed تحتاج إعادة محاولة.")
+        onProgress(100, "اكتمل إرسال القراءات: $synced ناجحة، $retryable ستُعاد تلقائياً، $needsReview تحتاج مراجعة.")
         if (synced > 0) dao.clearSyncedReadings()
-        "تمت مزامنة $synced قراءة. بقيت $failed قراءة للمراجعة أو إعادة المحاولة. التحصيلات الميدانية ستُفعّل في مرحلة مالية لاحقة."
+        SyncSummary(synced, retryable, needsReview)
     }
+
+    suspend fun requeueReadingForReview(localId: Int) = dao.requeueReadingForReview(localId)
 
     private suspend fun subscriberMeterId(subscriberId: String): Long {
         val meterId = dao.getSubscriberById(subscriberId)?.meterId?.toLongOrNull()
-        return meterId ?: throw IllegalStateException("معرف العداد غير متاح محلياً. حدّث قائمة المشتركين ثم أعد المحاولة.")
+        return meterId ?: throw PermanentSyncException("معرف العداد غير متاح محلياً. حدّث قائمة المشتركين ثم أعد المحاولة.")
     }
 
     private fun currentDateTime(): String = SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.US).format(Date())
@@ -149,8 +170,20 @@ class FieldReadingRepository(
         }
         return Base64.encodeToString(file.readBytes(), Base64.NO_WRAP) to mime
     }
+
     private fun localDateToUtc(value: String): String {
         val parsed = SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.US).parse(value) ?: Date()
         return SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSS'Z'", Locale.US).apply { timeZone = TimeZone.getTimeZone("UTC") }.format(parsed)
+    }
+
+    private class PermanentSyncException(message: String) : IllegalStateException(message)
+
+    private fun classifySyncFailure(error: Exception) = when (error) {
+        is PermanentSyncException -> com.example.data.OfflineSyncIssue("needs_review", error.message ?: "تحتاج القراءة إلى مراجعة الفني.")
+        is IOException -> OfflineSyncPolicy.forNetworkFailure()
+        is HttpException -> when (error.code()) {
+            else -> OfflineSyncPolicy.forHttpStatus(error.code())
+        }
+        else -> com.example.data.OfflineSyncIssue("retryable", error.message?.take(300) ?: "تعذر إرسال القراءة؛ ستُعاد المحاولة تلقائياً.")
     }
 }

@@ -12,6 +12,10 @@ class FieldReadingViewModel(application: Application) : AndroidViewModel(applica
     private val db = FieldReadingDatabase.getDatabase(application)
     private val repository = FieldReadingRepository(application, db.dao())
 
+    init {
+        FieldReadingSyncWorker.schedulePeriodic(application)
+    }
+
     // UI Session State
     private val _isLoggedIn = MutableStateFlow(repository.isLoggedIn())
     val isLoggedIn: StateFlow<Boolean> = _isLoggedIn.asStateFlow()
@@ -208,10 +212,18 @@ class FieldReadingViewModel(application: Application) : AndroidViewModel(applica
             
             _isSyncing.value = false
             if (result.isSuccess) {
-                _syncStatusMessage.value = result.getOrNull() ?: "اكتملت المزامنة بنجاح"
+                _syncStatusMessage.value = result.getOrNull()?.message() ?: "اكتملت المزامنة بنجاح"
             } else {
                 _syncStatusMessage.value = "فشلت المزامنة: ${result.exceptionOrNull()?.message}"
             }
+        }
+    }
+
+    fun requeueReadingForReview(localId: Int) {
+        viewModelScope.launch {
+            repository.requeueReadingForReview(localId)
+            _syncStatusMessage.value = "أُعيدت القراءة إلى طابور المزامنة. راجع بياناتها ثم ابدأ المزامنة عند توفر الإنترنت."
+            FieldReadingSyncWorker.enqueue(getApplication())
         }
     }
 }

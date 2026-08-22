@@ -35,6 +35,12 @@ interface FieldReadingDao {
     @Query("UPDATE pending_readings SET status = :status WHERE localId = :localId")
     suspend fun updateReadingStatus(localId: Int, status: String)
 
+    @Query("UPDATE pending_readings SET status = :status, retryCount = :retryCount, lastError = :lastError, lastAttemptAt = :lastAttemptAt WHERE localId = :localId")
+    suspend fun updateReadingSyncState(localId: Int, status: String, retryCount: Int, lastError: String?, lastAttemptAt: Long)
+
+    @Query("UPDATE pending_readings SET status = 'pending', lastError = NULL WHERE localId = :localId AND status = 'needs_review'")
+    suspend fun requeueReadingForReview(localId: Int)
+
     @Query("SELECT * FROM pending_payments ORDER BY createdAt DESC")
     fun getAllPendingPaymentsFlow(): Flow<List<PendingPaymentEntity>>
 

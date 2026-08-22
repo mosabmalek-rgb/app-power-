@@ -13,8 +13,11 @@ data class PendingReadingEntity(
     val latitude: Double,
     val longitude: Double,
     val photoPath: String?,
-    val status: String, // "pending", "synced", "failed"
+    val status: String, // "pending", "syncing", "retryable", "needs_review", "synced"
     val isMeterReplacement: Boolean = false,
     val clientReferenceId: String = java.util.UUID.randomUUID().toString(),
-    val createdAt: Long = System.currentTimeMillis()
+    val createdAt: Long = System.currentTimeMillis(),
+    val retryCount: Int = 0,
+    val lastError: String? = null,
+    val lastAttemptAt: Long? = null
 )
