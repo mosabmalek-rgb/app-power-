@@ -9,6 +9,13 @@ plugins {
   alias(libs.plugins.google.services)
 }
 
+val hasReleaseSigning = listOf(
+  providers.environmentVariable("POWERHUB_KEYSTORE_PATH").orNull,
+  providers.environmentVariable("POWERHUB_KEYSTORE_PASSWORD").orNull,
+  providers.environmentVariable("POWERHUB_KEY_ALIAS").orNull,
+  providers.environmentVariable("POWERHUB_KEY_PASSWORD").orNull
+).all { !it.isNullOrBlank() }
+
 android {
   namespace = "com.example"
   compileSdk { version = release(36) { minorApiLevel = 1 } }
@@ -17,8 +24,8 @@ android {
     applicationId = "com.aistudio.fieldreading.krbytx"
     minSdk = 24
     targetSdk = 36
-    versionCode = 1
-    versionName = "1.0"
+    versionCode = 2
+    versionName = "1.1.0"
     val apiBaseUrl = project.providers.gradleProperty("POWERHUB_API_BASE_URL").orElse("https://powerhub.example.invalid/").get()
     buildConfigField("String", "POWERHUB_API_BASE_URL", "\"$apiBaseUrl\"")
 
@@ -26,12 +33,17 @@ android {
   }
 
   signingConfigs {
-    create("release") {
-      val keystorePath = System.getenv("KEYSTORE_PATH") ?: "${rootDir}/my-upload-key.jks"
-      storeFile = file(keystorePath)
-      storePassword = System.getenv("STORE_PASSWORD")
-      keyAlias = "upload"
-      keyPassword = System.getenv("KEY_PASSWORD")
+    val keystorePath = providers.environmentVariable("POWERHUB_KEYSTORE_PATH").orNull
+    val keystorePassword = providers.environmentVariable("POWERHUB_KEYSTORE_PASSWORD").orNull
+    val keyAliasValue = providers.environmentVariable("POWERHUB_KEY_ALIAS").orNull
+    val keyPassword = providers.environmentVariable("POWERHUB_KEY_PASSWORD").orNull
+    if (!keystorePath.isNullOrBlank() && !keystorePassword.isNullOrBlank() && !keyAliasValue.isNullOrBlank() && !keyPassword.isNullOrBlank()) {
+      create("release") {
+        storeFile = file(keystorePath)
+        storePassword = keystorePassword
+        keyAlias = keyAliasValue
+        this.keyPassword = keyPassword
+      }
     }
   }
 
@@ -40,7 +52,7 @@ android {
       isCrunchPngs = false
       isMinifyEnabled = false
       proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
-      signingConfig = signingConfigs.getByName("release")
+      signingConfig = signingConfigs.findByName("release")
     }
     debug { }
   }
@@ -56,6 +68,20 @@ android {
   dependenciesInfo {
     includeInApk = false
     includeInBundle = true
+  }
+}
+
+tasks.configureEach {
+  if (name.contains("Release", ignoreCase = true) && (name.contains("assemble", ignoreCase = true) || name.contains("bundle", ignoreCase = true))) {
+    doFirst {
+      val apiBaseUrl = project.providers.gradleProperty("POWERHUB_API_BASE_URL").orNull.orEmpty()
+      require(apiBaseUrl.startsWith("https://") && apiBaseUrl.endsWith("/") && !apiBaseUrl.contains("example.invalid")) {
+        "حدد عنوان إنتاج PowerHub عبر -PPOWERHUB_API_BASE_URL=https://your-domain/ قبل بناء Release."
+      }
+      require(hasReleaseSigning) {
+        "أضف POWERHUB_KEYSTORE_PATH وPOWERHUB_KEYSTORE_PASSWORD وPOWERHUB_KEY_ALIAS وPOWERHUB_KEY_PASSWORD في بيئة البناء قبل بناء Release."
+      }
+    }
   }
 }
 
