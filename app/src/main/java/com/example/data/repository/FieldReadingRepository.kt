@@ -1,6 +1,7 @@
 package com.example.data.repository
 
 import android.content.Context
+import android.util.Base64
 import com.example.data.FieldReadingDao
 import com.example.data.PendingPaymentEntity
 import com.example.data.PendingReadingEntity
@@ -12,6 +13,7 @@ import com.example.data.api.MobileReadingRequest
 import com.example.data.api.MobileSessionStore
 import kotlinx.coroutines.flow.Flow
 import java.text.SimpleDateFormat
+import java.io.File
 import java.util.Date
 import java.util.Locale
 import java.util.TimeZone
@@ -102,6 +104,7 @@ class FieldReadingRepository(
             onProgress(((index * 100) / readings.size).coerceAtLeast(5), "جارٍ إرسال قراءة ${index + 1} من ${readings.size}…")
             try {
                 dao.updateReadingStatus(reading.localId, "syncing")
+                val image = reading.photoPath?.let { loadImagePayload(it) }
                 val response = api.createReading(MobileReadingRequest(
                     clientOperationId = reading.clientReferenceId,
                     branchId = branchId,
@@ -109,11 +112,13 @@ class FieldReadingRepository(
                     meterId = subscriberMeterId(reading.subscriberId),
                     readingValue = String.format(Locale.US, "%.3f", reading.currentReading),
                     readingAt = localDateToUtc(reading.readingDate),
-                    captureMethod = if (reading.photoPath.isNullOrBlank()) "manual" else "photo",
+                    captureMethod = if (image == null) "manual" else "photo",
                     isMeterReplacement = reading.isMeterReplacement,
                     fieldVerified = reading.latitude != 0.0 || reading.longitude != 0.0,
                     latitude = reading.latitude.takeIf { it != 0.0 },
                     longitude = reading.longitude.takeIf { it != 0.0 },
+                    imageData = image?.first,
+                    imageMime = image?.second,
                     notes = reading.notes.ifBlank { null }
                 ))
                 if (response.id > 0) { dao.updateReadingStatus(reading.localId, "synced"); synced++ } else { dao.updateReadingStatus(reading.localId, "failed"); failed++ }
@@ -133,6 +138,17 @@ class FieldReadingRepository(
     }
 
     private fun currentDateTime(): String = SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.US).format(Date())
+
+    private fun loadImagePayload(path: String): Pair<String, String>? {
+        val file = File(path)
+        if (!file.exists() || !file.isFile || file.length() <= 0 || file.length() > 5 * 1024 * 1024) return null
+        val mime = when (file.extension.lowercase(Locale.US)) {
+            "png" -> "image/png"
+            "webp" -> "image/webp"
+            else -> "image/jpeg"
+        }
+        return Base64.encodeToString(file.readBytes(), Base64.NO_WRAP) to mime
+    }
     private fun localDateToUtc(value: String): String {
         val parsed = SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.US).parse(value) ?: Date()
         return SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSS'Z'", Locale.US).apply { timeZone = TimeZone.getTimeZone("UTC") }.format(parsed)

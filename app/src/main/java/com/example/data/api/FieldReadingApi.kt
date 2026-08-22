@@ -34,6 +34,8 @@ data class MobileReadingRequest(
     val fieldVerified: Boolean,
     val latitude: Double? = null,
     val longitude: Double? = null,
+    val imageData: String? = null,
+    val imageMime: String? = null,
     val notes: String? = null
 )
 data class MobileReadingResponse(val id: Long, val status: String, val consumptionKwh: String?, val replayed: Boolean)

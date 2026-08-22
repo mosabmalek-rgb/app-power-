@@ -1,6 +1,13 @@
 package com.example.ui.screens
 
+import android.Manifest
+import android.content.pm.PackageManager
+import android.net.Uri
 import android.widget.Toast
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.core.content.ContextCompat
+import androidx.core.content.FileProvider
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -27,6 +34,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.R
 import com.example.ui.FieldReadingViewModel
+import com.google.android.gms.location.LocationServices
+import java.io.File
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -42,21 +51,31 @@ fun AddReadingScreen(
     var isMeterReplacement by remember { mutableStateOf(false) }
     var fieldVerified by remember { mutableStateOf(true) }
 
-    // Mock image capture path state
     var capturedPhotoPath by remember { mutableStateOf<String?>(null) }
-    
-    // GPS State (Central Riyadh by default, simulate reading from system)
-    var latitude by remember { mutableStateOf(24.7136) }
-    var longitude by remember { mutableStateOf(46.6753) }
+    var pendingPhotoUri by remember { mutableStateOf<Uri?>(null) }
+    var pendingPhotoPath by remember { mutableStateOf<String?>(null) }
+    var latitude by remember { mutableStateOf<Double?>(null) }
+    var longitude by remember { mutableStateOf<Double?>(null) }
     var gpsReady by remember { mutableStateOf(false) }
-
+    val fusedLocation = remember { LocationServices.getFusedLocationProviderClient(context) }
+    fun updateLocation() {
+        if (ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_FINE_LOCATION) != PackageManager.PERMISSION_GRANTED) return
+        fusedLocation.lastLocation.addOnSuccessListener { location ->
+            latitude = location?.latitude
+            longitude = location?.longitude
+            gpsReady = location != null
+        }
+    }
+    val locationPermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+        if (granted) updateLocation() else Toast.makeText(context, "تم حفظ القراءة بدون موقع لأن الإذن لم يُمنح.", Toast.LENGTH_SHORT).show()
+    }
+    val takePicture = rememberLauncherForActivityResult(ActivityResultContracts.TakePicture()) { success ->
+        capturedPhotoPath = if (success) pendingPhotoPath else null
+        Toast.makeText(context, if (success) "تم التقاط صورة العداد." else "لم يتم حفظ الصورة.", Toast.LENGTH_SHORT).show()
+    }
     LaunchedEffect(Unit) {
-        // Simulate GPS fetching delay
-        kotlinx.coroutines.delay(1000)
-        gpsReady = true
-        // Add random small offset for realism
-        latitude += (Math.random() - 0.5) * 0.01
-        longitude += (Math.random() - 0.5) * 0.01
+        if (ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED) updateLocation()
+        else locationPermission.launch(Manifest.permission.ACCESS_FINE_LOCATION)
     }
 
     Scaffold(
@@ -245,9 +264,11 @@ fun AddReadingScreen(
                             
                             Button(
                                 onClick = {
-                                    // Simulated camera capture
-                                    capturedPhotoPath = "mock_photo_meter_${System.currentTimeMillis()}.jpg"
-                                    Toast.makeText(context, "تم التقاط صورة العداد بنجاح!", Toast.LENGTH_SHORT).show()
+                                    val photoFile = File(context.cacheDir, "meter_${System.currentTimeMillis()}.jpg")
+                                    val uri = FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", photoFile)
+                                    pendingPhotoUri = uri
+                                    pendingPhotoPath = photoFile.absolutePath
+                                    takePicture.launch(uri)
                                 },
                                 modifier = Modifier.testTag("capture_photo_button")
                             ) {
@@ -308,7 +329,7 @@ fun AddReadingScreen(
                                 Text("إحداثيات الموقع الميداني تلقائياً (GPS)", fontWeight = FontWeight.Bold, fontSize = 13.sp)
                                 if (gpsReady) {
                                     Text(
-                                        text = "خط عرض: ${String.format("%.5f", latitude)} | خط طول: ${String.format("%.5f", longitude)}",
+                                        text = if (latitude != null && longitude != null) "خط عرض: ${String.format("%.5f", latitude)} | خط طول: ${String.format("%.5f", longitude)}" else "لم يتم تحديد الموقع",
                                         fontSize = 11.sp,
                                         color = MaterialTheme.colorScheme.primary,
                                         fontWeight = FontWeight.Bold
@@ -365,8 +386,8 @@ fun AddReadingScreen(
                             subscriberId = sub.id,
                             currentReading = readingVal,
                             notes = notes,
-                            latitude = latitude,
-                            longitude = longitude,
+                            latitude = latitude ?: 0.0,
+                            longitude = longitude ?: 0.0,
                             photoPath = capturedPhotoPath,
                             isMeterReplacement = isMeterReplacement
                         ) { success, message ->

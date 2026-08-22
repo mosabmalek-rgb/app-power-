@@ -149,6 +149,7 @@ class FieldReadingViewModel(application: Application) : AndroidViewModel(applica
                 isMeterReplacement = isMeterReplacement
             )
             if (result.isSuccess) {
+                FieldReadingSyncWorker.enqueue(getApplication())
                 onResult(true, "تم حفظ القراءة محلياً بنجاح (حالة معلقة)")
             } else {
                 onResult(false, result.exceptionOrNull()?.message ?: "خطأ في حفظ القراءة")
