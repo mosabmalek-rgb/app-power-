@@ -221,9 +221,8 @@ fun LoginScreen(
                     // Login Button
                     Button(
                         onClick = {
-                            val success = viewModel.login(username, password, rememberMe)
-                            if (success) {
-                                onLoginSuccess()
+                            viewModel.login(username, password, rememberMe) { success ->
+                                if (success) onLoginSuccess()
                             }
                         },
                         modifier = Modifier

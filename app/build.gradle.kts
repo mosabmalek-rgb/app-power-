@@ -19,6 +19,8 @@ android {
     targetSdk = 36
     versionCode = 1
     versionName = "1.0"
+    val apiBaseUrl = project.providers.gradleProperty("POWERHUB_API_BASE_URL").orElse("https://powerhub.example.invalid/").get()
+    buildConfigField("String", "POWERHUB_API_BASE_URL", "\"$apiBaseUrl\"")
 
     testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
   }
@@ -98,6 +100,7 @@ dependencies {
   implementation(libs.androidx.navigation.compose)
   implementation(libs.androidx.room.ktx)
   implementation(libs.androidx.room.runtime)
+  implementation(libs.androidx.security.crypto)
   implementation(libs.coil.compose)
   implementation(libs.converter.moshi)
   implementation(libs.firebase.ai)

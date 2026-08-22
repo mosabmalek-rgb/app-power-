@@ -1,302 +1,140 @@
 package com.example.data.repository
 
 import android.content.Context
-import com.example.data.*
+import com.example.data.FieldReadingDao
+import com.example.data.PendingPaymentEntity
+import com.example.data.PendingReadingEntity
+import com.example.data.SubscriberEntity
+import com.example.data.api.FieldReadingApi
+import com.example.data.api.MobileApiClient
+import com.example.data.api.MobileLoginRequest
+import com.example.data.api.MobileReadingRequest
+import com.example.data.api.MobileSessionStore
 import kotlinx.coroutines.flow.Flow
-import kotlinx.coroutines.delay
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
+import java.util.TimeZone
 
 class FieldReadingRepository(
     private val context: Context,
-    private val dao: FieldReadingDao
+    private val dao: FieldReadingDao,
+    private val sessionStore: MobileSessionStore = MobileSessionStore(context),
+    private val api: FieldReadingApi = MobileApiClient.create(sessionStore)
 ) {
     private val prefs = context.getSharedPreferences("field_reading_prefs", Context.MODE_PRIVATE)
 
-    // Live session info
-    fun isLoggedIn(): Boolean = prefs.getBoolean("is_logged_in", false)
-    fun getAuthToken(): String? = prefs.getString("auth_token", null)
-    fun getUserName(): String = prefs.getString("user_name", "أحمد المحصل") ?: "أحمد المحصل"
-    fun getUserRole(): String = prefs.getString("user_role", "محصل") ?: "محصل"
-    fun getCompanyName(): String = prefs.getString("company_name", "شركة شبكات الطاقة للمولدات") ?: "شركة شبكات الطاقة للمولدات"
+    fun isLoggedIn(): Boolean = sessionStore.isLoggedIn()
+    fun getUserName(): String = prefs.getString("user_name", "") ?: ""
+    fun getUserRole(): String = prefs.getString("user_role", "") ?: ""
+    fun getCompanyName(): String = prefs.getString("company_name", "PowerHub") ?: "PowerHub"
     fun getSavedUsername(): String = prefs.getString("saved_username", "") ?: ""
+    private fun activeBranchId(): Long = prefs.getLong("active_branch_id", -1L)
 
-    fun saveSession(token: String, username: String, role: String, companyName: String?, remember: Boolean) {
+    private suspend fun ensureActiveAccessToken() {
+        if (!sessionStore.needsAccessRefresh()) return
+        val refreshToken = sessionStore.refreshToken() ?: throw IllegalStateException("انتهت جلسة الموبايل. سجّل الدخول مجدداً.")
+        sessionStore.save(api.refresh(com.example.data.api.MobileRefreshRequest(refreshToken)))
+    }
+
+    suspend fun login(email: String, password: String, remember: Boolean): Result<Unit> = runCatching {
+        val session = api.login(MobileLoginRequest(email = email.trim().lowercase(), password = password, deviceLabel = "Android Field Reader"))
+        sessionStore.save(session)
         prefs.edit().apply {
-            putBoolean("is_logged_in", true)
-            putString("auth_token", token)
-            putString("user_name", if (username == "admin") "م. أحمد الغامدي" else username)
-            putString("user_role", if (username == "admin" || role == "admin") "محاسب فرع" else "محصل")
-            putString("company_name", companyName ?: "شركة شبكات الطاقة للمولدات")
-            if (remember) {
-                putString("saved_username", username)
-            } else {
-                remove("saved_username")
-            }
+            putString("user_name", session.user.name ?: email.substringBefore("@"))
+            putString("user_role", session.user.role)
+            putString("company_name", "PowerHub")
+            putLong("active_branch_id", session.user.branchIds.firstOrNull() ?: -1L)
+            if (remember) putString("saved_username", email.trim().lowercase()) else remove("saved_username")
             apply()
         }
     }
 
     fun clearSession() {
-        prefs.edit().apply {
-            putBoolean("is_logged_in", false)
-            putString("auth_token", null)
-            apply()
-        }
+        sessionStore.clear()
+        prefs.edit().clear().apply()
     }
 
-    // Local DB subscribers flow
     val subscribersFlow: Flow<List<SubscriberEntity>> = dao.getAllSubscribersFlow()
     val pendingReadingsFlow: Flow<List<PendingReadingEntity>> = dao.getAllPendingReadingsFlow()
     val pendingPaymentsFlow: Flow<List<PendingPaymentEntity>> = dao.getAllPendingPaymentsFlow()
-
     fun getSubscriberFlow(id: String): Flow<SubscriberEntity?> = dao.getSubscriberByIdFlow(id)
 
-    // Real compression of image files before sync/upload
-    private fun compressImageAndOptimize(photoPath: String?): String? {
-        if (photoPath == null) return null
-        try {
-            val file = java.io.File(photoPath)
-            if (file.exists() && file.length() > 0) {
-                val bitmap = android.graphics.BitmapFactory.decodeFile(photoPath)
-                if (bitmap != null) {
-                    val compressedFile = java.io.File(context.cacheDir, "compressed_" + file.name)
-                    val out = java.io.FileOutputStream(compressedFile)
-                    // Compress JPEG with 70% quality (ideal for meter display reading clarity & size reduction)
-                    bitmap.compress(android.graphics.Bitmap.CompressFormat.JPEG, 70, out)
-                    out.flush()
-                    out.close()
-                    return compressedFile.absolutePath
-                }
-            }
-        } catch (e: Exception) {
-            // Graceful fallback to original path if actual file is missing or simulated
-        }
-        return photoPath
-    }
-
-    suspend fun saveReading(
-        subscriberId: String,
-        currentReading: Double,
-        notes: String,
-        latitude: Double,
-        longitude: Double,
-        photoPath: String?,
-        isMeterReplacement: Boolean
-    ): Result<Unit> {
-        val subscriber = dao.getSubscriberById(subscriberId) 
-            ?: return Result.failure(Exception("خطأ: لم يتم العثور على بيانات هذا المشترك"))
-        
-        // 1. Validation: current reading must be greater than or equal to previous reading unless meter replacement
-        if (!isMeterReplacement && currentReading < subscriber.lastReading) {
-            return Result.failure(Exception("خطأ: القراءة الحالية ($currentReading) يجب أن تكون أكبر من أو تساوي القراءة السابقة (${subscriber.lastReading})."))
-        }
-
-        // 2. Prevent Duplicate Readings (Double-saving same value check)
-        val subscriberReadings = dao.getReadingsForSubscriber(subscriberId)
-        val isDuplicateValue = subscriberReadings.any { it.currentReading == currentReading }
-        if (isDuplicateValue) {
-            return Result.failure(Exception("خطأ: تم تسجيل هذه القراءة ($currentReading) مسبقاً للعداد المرجعي."))
-        }
-
-        // 3. Prevent Duplicate Readings (Multiple readings on same day unless meter replacement)
-        val todayDate = getCurrentFormattedDate().substringBefore(" ") // Gets "yyyy-MM-dd"
-        val hasReadingToday = subscriberReadings.any { it.readingDate.startsWith(todayDate) }
-        if (hasReadingToday && !isMeterReplacement) {
-            return Result.failure(Exception("تنبيه: توجد قراءة مسجلة بالفعل لهذا العداد اليوم ($todayDate). لا يسمح بالتكرار."))
-        }
-
-        // 4. Image Compression on-the-fly (Saves local cache storage immediately)
-        val optimizedPhotoPath = if (photoPath != null) compressImageAndOptimize(photoPath) else null
-
-        val readingEntity = PendingReadingEntity(
-            subscriberId = subscriberId,
-            currentReading = currentReading,
-            readingDate = getCurrentFormattedDate(),
-            notes = notes,
-            latitude = latitude,
-            longitude = longitude,
-            photoPath = optimizedPhotoPath,
-            status = "pending",
-            isMeterReplacement = isMeterReplacement
-        )
-
-        dao.insertPendingReading(readingEntity)
+    suspend fun saveReading(subscriberId: String, currentReading: Double, notes: String, latitude: Double, longitude: Double, photoPath: String?, isMeterReplacement: Boolean): Result<Unit> {
+        val subscriber = dao.getSubscriberById(subscriberId) ?: return Result.failure(Exception("لم يتم العثور على بيانات هذا المشترك على الجهاز."))
+        if (!isMeterReplacement && currentReading < subscriber.lastReading) return Result.failure(Exception("القراءة الحالية يجب أن تكون أكبر من أو تساوي القراءة السابقة."))
+        val existing = dao.getReadingsForSubscriber(subscriberId)
+        if (existing.any { it.currentReading == currentReading }) return Result.failure(Exception("تم حفظ القراءة نفسها محلياً مسبقاً."))
+        val today = currentDateTime().substringBefore(" ")
+        if (existing.any { it.readingDate.startsWith(today) } && !isMeterReplacement) return Result.failure(Exception("توجد قراءة محلية لهذا العداد اليوم."))
+        dao.insertPendingReading(PendingReadingEntity(subscriberId = subscriberId, currentReading = currentReading, readingDate = currentDateTime(), notes = notes, latitude = latitude, longitude = longitude, photoPath = photoPath, status = "pending", isMeterReplacement = isMeterReplacement))
         return Result.success(Unit)
     }
 
-    suspend fun savePayment(
-        subscriberId: String,
-        amount: Double,
-        paymentMethod: String,
-        notes: String
-    ): Boolean {
+    suspend fun savePayment(subscriberId: String, amount: Double, paymentMethod: String, notes: String): Boolean {
         if (amount <= 0) return false
-
-        val paymentEntity = PendingPaymentEntity(
-            subscriberId = subscriberId,
-            amount = amount,
-            paymentMethod = paymentMethod,
-            notes = notes,
-            status = "pending"
-        )
-
-        dao.insertPendingPayment(paymentEntity)
+        dao.insertPendingPayment(PendingPaymentEntity(subscriberId = subscriberId, amount = amount, paymentMethod = paymentMethod, notes = notes, status = "pending"))
         return true
     }
 
-    private fun getCurrentFormattedDate(): String {
-        val sdf = java.text.SimpleDateFormat("yyyy-MM-dd HH:mm", java.util.Locale.getDefault())
-        return sdf.format(java.util.Date())
+    suspend fun refreshSubscribers(): Result<Unit> = runCatching {
+        ensureActiveAccessToken()
+        val profile = api.getProfile().user
+        val branchId = activeBranchId().takeIf { it in profile.branchIds } ?: profile.branchIds.firstOrNull()
+            ?: throw IllegalStateException("لا توجد فروع ميدانية مسموحة لهذا الحساب.")
+        prefs.edit().putLong("active_branch_id", branchId).apply()
+        val response = api.getSubscribers(branchId)
+        dao.clearAllSubscribers()
+        dao.insertSubscribers(response.items.map { item ->
+            SubscriberEntity(id = item.id.toString(), meterId = item.meterId.toString(), refNumber = item.subscriberNo, name = item.fullName, phone = item.phone, address = item.address ?: "", branchId = item.branchId.toString(), lastReading = item.lastReading?.toDoubleOrNull() ?: 0.0, lastReadingDate = item.lastReadingAt ?: "", balance = 0.0)
+        })
     }
 
-    // Pull subscribers from API or populate mock list if offline/failed
-    suspend fun refreshSubscribers(): Result<Unit> {
-        return try {
-            delay(1200) // Network lag simulation
-            
-            val mockSubscribers = listOf(
-                SubscriberEntity("sub1", "REF-201", "عبد الله الحربي", "0501234567", "شارع الملك عبد العزيز، الرياض", "branch_riyadh", 1250.0, "2026-08-01", 150.0),
-                SubscriberEntity("sub2", "REF-202", "محمد الشهري", "0512345678", "حي الياسمين، الرياض", "branch_riyadh", 3400.0, "2026-08-02", -50.0),
-                SubscriberEntity("sub3", "REF-203", "سعيد الغامدي", "0523456789", "حي الصفا، جدة", "branch_jeddah", 890.0, "2026-08-03", 0.0),
-                SubscriberEntity("sub4", "REF-204", "خالد عسيري", "0534567890", "حي الروضة، جدة", "branch_jeddah", 5430.0, "2026-08-04", 450.0),
-                SubscriberEntity("sub5", "REF-205", "يوسف العتيبي", "0545678901", "شارع الضباب، الرياض", "branch_riyadh", 7120.0, "2026-08-05", 85.0),
-                SubscriberEntity("sub6", "REF-206", "سليمان الرشيد", "0556789012", "حي العقيق، الرياض", "branch_riyadh", 215.0, "2026-08-06", -120.0)
-            )
-
-            // Save to database
-            dao.insertSubscribers(mockSubscribers)
-            Result.success(Unit)
-        } catch (e: Exception) {
-            Result.failure(e)
+    suspend fun syncAllData(onProgress: (Int, String) -> Unit): Result<String> = runCatching {
+        ensureActiveAccessToken()
+        val branchId = activeBranchId()
+        if (branchId <= 0) throw IllegalStateException("حدّث قائمة المشتركين أولاً لتحديد الفرع المسموح.")
+        val readings = dao.getPendingReadingsWithStatus("pending") + dao.getPendingReadingsWithStatus("failed")
+        if (readings.isEmpty()) return@runCatching "لا توجد قراءات معلقة للمزامنة."
+        var synced = 0
+        var failed = 0
+        readings.forEachIndexed { index, reading ->
+            onProgress(((index * 100) / readings.size).coerceAtLeast(5), "جارٍ إرسال قراءة ${index + 1} من ${readings.size}…")
+            try {
+                dao.updateReadingStatus(reading.localId, "syncing")
+                val response = api.createReading(MobileReadingRequest(
+                    clientOperationId = reading.clientReferenceId,
+                    branchId = branchId,
+                    subscriberId = reading.subscriberId.toLong(),
+                    meterId = subscriberMeterId(reading.subscriberId),
+                    readingValue = String.format(Locale.US, "%.3f", reading.currentReading),
+                    readingAt = localDateToUtc(reading.readingDate),
+                    captureMethod = if (reading.photoPath.isNullOrBlank()) "manual" else "photo",
+                    isMeterReplacement = reading.isMeterReplacement,
+                    fieldVerified = reading.latitude != 0.0 || reading.longitude != 0.0,
+                    latitude = reading.latitude.takeIf { it != 0.0 },
+                    longitude = reading.longitude.takeIf { it != 0.0 },
+                    notes = reading.notes.ifBlank { null }
+                ))
+                if (response.id > 0) { dao.updateReadingStatus(reading.localId, "synced"); synced++ } else { dao.updateReadingStatus(reading.localId, "failed"); failed++ }
+            } catch (_: Exception) {
+                dao.updateReadingStatus(reading.localId, "failed")
+                failed++
+            }
         }
+        onProgress(100, "اكتمل إرسال القراءات: $synced ناجحة، $failed تحتاج إعادة محاولة.")
+        if (synced > 0) dao.clearSyncedReadings()
+        "تمت مزامنة $synced قراءة. بقيت $failed قراءة للمراجعة أو إعادة المحاولة. التحصيلات الميدانية ستُفعّل في مرحلة مالية لاحقة."
     }
 
-    // Smart Sync Implementation
-    suspend fun syncAllData(onProgress: (Int, String) -> Unit): Result<String> {
-        return try {
-            val pendingReadings = dao.getPendingReadingsWithStatus("pending") + dao.getPendingReadingsWithStatus("failed")
-            val pendingPayments = dao.getPendingPaymentsWithStatus("pending") + dao.getPendingPaymentsWithStatus("failed")
+    private suspend fun subscriberMeterId(subscriberId: String): Long {
+        val meterId = dao.getSubscriberById(subscriberId)?.meterId?.toLongOrNull()
+        return meterId ?: throw IllegalStateException("معرف العداد غير متاح محلياً. حدّث قائمة المشتركين ثم أعد المحاولة.")
+    }
 
-            val totalItems = pendingReadings.size + pendingPayments.size
-            if (totalItems == 0) {
-                return Result.success("كل البيانات مسبقاً متزامنة مع المنصة")
-            }
-
-            // 1. Connectivity optimization: Sort to push tiny text/payment payloads first (Stage 1)
-            onProgress(5, "تفعيل المزامنة الذكية: جاري تهيئة الاتصال والتحقق...")
-            delay(800)
-
-            var completedCount = 0
-
-            // Stage 1: Fast Sync for Payment Collections (Lightweight text/financial payload)
-            if (pendingPayments.isNotEmpty()) {
-                onProgress(15, "المرحلة الأولى: ترحيل التحصيلات المالية المعلقة لضمان سرعة إغلاق الصناديق...")
-                delay(1000)
-                
-                for ((index, payment) in pendingPayments.withIndex()) {
-                    val sub = dao.getSubscriberById(payment.subscriberId)
-                    val subName = sub?.name ?: "مشترك غير معروف"
-                    
-                    val progressValue = 15 + ((index + 1) * 25 / pendingPayments.size)
-                    onProgress(
-                        progressValue,
-                        "ترحيل دفعة المشترك: $subName بقيمة ${payment.amount} ريال..."
-                    )
-                    
-                    delay(600)
-                    dao.updatePaymentStatus(payment.localId, "synced")
-                    
-                    if (sub != null) {
-                        dao.insertSubscribers(listOf(
-                            sub.copy(balance = sub.balance - payment.amount)
-                        ))
-                    }
-                    completedCount++
-                }
-            }
-
-            // Stage 2: Sync Readings
-            if (pendingReadings.isNotEmpty()) {
-                onProgress(45, "المرحلة الثانية: ترحيل قراءات العدادات وتحسين جودة الرفع...")
-                delay(1000)
-
-                // Separate readings: text-only vs readings with images
-                val (readingsWithPhoto, readingsTextOnly) = pendingReadings.partition { it.photoPath != null }
-
-                // Sync text-only readings first (extremely fast, high priority)
-                if (readingsTextOnly.isNotEmpty()) {
-                    for ((index, reading) in readingsTextOnly.withIndex()) {
-                        val sub = dao.getSubscriberById(reading.subscriberId)
-                        val subName = sub?.name ?: "مشترك غير معروف"
-                        
-                        val progressValue = 45 + ((index + 1) * 20 / readingsTextOnly.size)
-                        onProgress(
-                            progressValue,
-                            "رفع قراءة عداد $subName: ${reading.currentReading} ك.و/س (سريعة)..."
-                        )
-                        
-                        delay(500)
-                        dao.updateReadingStatus(reading.localId, "synced")
-                        
-                        if (sub != null) {
-                            dao.insertSubscribers(listOf(
-                                sub.copy(
-                                    lastReading = reading.currentReading,
-                                    lastReadingDate = reading.readingDate
-                                )
-                            ))
-                        }
-                        completedCount++
-                    }
-                }
-
-                // Sync readings with photo (heavy payloads - apply image compression logs/actions)
-                if (readingsWithPhoto.isNotEmpty()) {
-                    onProgress(70, "المرحلة الثالثة: ضغط صور العدادات ورفع المرفقات الذكية...")
-                    delay(1200)
-
-                    for ((index, reading) in readingsWithPhoto.withIndex()) {
-                        val sub = dao.getSubscriberById(reading.subscriberId)
-                        val subName = sub?.name ?: "مشترك غير معروف"
-                        
-                        val progressValue = 70 + ((index + 1) * 25 / readingsWithPhoto.size)
-                        
-                        // Smart compression notification
-                        onProgress(
-                            progressValue,
-                            "تقليص حجم صورة عداد $subName بنسبة 70% وتوفير حزم الرفع..."
-                        )
-                        delay(600)
-                        
-                        onProgress(
-                            progressValue,
-                            "رفع المرفق المضغوط وقراءة المشترك $subName: ${reading.currentReading} ك.و/س..."
-                        )
-                        delay(700)
-                        
-                        dao.updateReadingStatus(reading.localId, "synced")
-                        
-                        if (sub != null) {
-                            dao.insertSubscribers(listOf(
-                                sub.copy(
-                                    lastReading = reading.currentReading,
-                                    lastReadingDate = reading.readingDate
-                                )
-                            ))
-                        }
-                        completedCount++
-                    }
-                }
-            }
-
-            onProgress(100, "اكتملت المزامنة الذكية بنجاح! تم الحفاظ على استهلاك البيانات الميدانية.")
-            delay(1000)
-            
-            dao.clearSyncedReadings()
-            dao.clearSyncedPayments()
-
-            Result.success("تم ترحيل $completedCount عمليات ميدانية بنجاح بنمط المزامنة الذكية")
-        } catch (e: Exception) {
-            Result.failure(e)
-        }
+    private fun currentDateTime(): String = SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.US).format(Date())
+    private fun localDateToUtc(value: String): String {
+        val parsed = SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.US).parse(value) ?: Date()
+        return SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSS'Z'", Locale.US).apply { timeZone = TimeZone.getTimeZone("UTC") }.format(parsed)
     }
 }

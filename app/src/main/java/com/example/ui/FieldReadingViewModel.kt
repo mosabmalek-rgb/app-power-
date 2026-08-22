@@ -99,34 +99,27 @@ class FieldReadingViewModel(application: Application) : AndroidViewModel(applica
         _searchQuery.value = query
     }
 
-    fun login(username: String, password: String, remember: Boolean): Boolean {
+    fun login(username: String, password: String, remember: Boolean, onResult: (Boolean) -> Unit) {
         _loginError.value = null
         if (username.isBlank() || password.isBlank()) {
             _loginError.value = "الرجاء إدخال اسم المستخدم وكلمة المرور"
-            return false
+            onResult(false)
+            return
         }
-        
-        // Accept typical demo or admin credentials for mock login
-        if ((username == "admin" && password == "admin") || (username == "user" && password == "123456") || username.length >= 3) {
-            val token = "jwt-mock-token-for-${username}"
-            val role = if (username == "admin") "محاسب فرع" else "محصل"
-            val displayRole = if (username == "admin") "محاسب فرع" else "فني"
-            val importedCompany = when (username) {
-                "admin" -> "سدير لشبكات الطاقة والمولدات"
-                "user" -> "التضامن لإنتاج وتوزيع الطاقة"
-                else -> "الشركة الوطنية للمولدات الميدانية (PowerHub)"
+        viewModelScope.launch {
+            val result = repository.login(username, password, remember)
+            if (result.isSuccess) {
+                _isLoggedIn.value = true
+                _userName.value = repository.getUserName()
+                _userRole.value = repository.getUserRole()
+                _companyName.value = repository.getCompanyName()
+                _savedUsername.value = repository.getSavedUsername()
+                repository.refreshSubscribers()
+                onResult(true)
+            } else {
+                _loginError.value = result.exceptionOrNull()?.message ?: "تعذر تسجيل الدخول إلى PowerHub"
+                onResult(false)
             }
-            
-            repository.saveSession(token, username, displayRole, importedCompany, remember)
-            _isLoggedIn.value = true
-            _userName.value = repository.getUserName()
-            _userRole.value = repository.getUserRole()
-            _companyName.value = repository.getCompanyName()
-            _savedUsername.value = repository.getSavedUsername()
-            return true
-        } else {
-            _loginError.value = "اسم المستخدم أو كلمة المرور غير صحيحة"
-            return false
         }
     }
 

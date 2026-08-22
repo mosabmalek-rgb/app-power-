@@ -6,6 +6,7 @@ import androidx.room.PrimaryKey
 @Entity(tableName = "subscribers")
 data class SubscriberEntity(
     @PrimaryKey val id: String,
+    val meterId: String = "",
     val refNumber: String,
     val name: String,
     val phone: String,

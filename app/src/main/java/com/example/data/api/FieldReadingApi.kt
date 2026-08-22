@@ -1,82 +1,59 @@
 package com.example.data.api
 
 import retrofit2.http.*
-import okhttp3.MultipartBody
 
-data class LoginRequest(val username: String, val password: String)
-data class LoginResponse(val token: String, val refreshToken: String, val user: UserProfile)
-data class UserProfile(
-    val id: String, 
-    val name: String, 
-    val username: String, 
-    val role: String, 
-    val branchPermissions: List<String>,
-    val companyName: String? = null
-)
+data class MobileLoginRequest(val email: String, val password: String, val tenantId: Long? = null, val deviceLabel: String? = null)
+data class MobileUser(val id: Long, val name: String?, val role: String, val tenantId: Long, val branchIds: List<Long>)
+data class MobileSessionResponse(val accessToken: String, val refreshToken: String, val expiresIn: Long, val user: MobileUser)
+data class MobileMeResponse(val user: MobileUser)
+data class MobileRefreshRequest(val refreshToken: String)
 
-data class SubscriberDto(
-    val id: String,
-    val refNumber: String,
-    val name: String,
+data class MobileSubscriberDto(
+    val id: Long,
+    val subscriberNo: String,
+    val fullName: String,
     val phone: String,
-    val address: String,
-    val branchId: String,
-    val lastReading: Double,
-    val lastReadingDate: String,
-    val balance: Double
+    val address: String?,
+    val branchId: Long,
+    val meterId: Long,
+    val meterSerial: String,
+    val lastReading: String?,
+    val lastReadingAt: String?
 )
+data class MobileSubscribersResponse(val items: List<MobileSubscriberDto>, val nextCursor: String?)
 
-data class ReadingUploadDto(
-    val subscriberId: String,
-    val currentReading: Double,
-    val readingDate: String,
-    val notes: String,
-    val latitude: Double,
-    val longitude: Double,
-    val photoUrl: String?,
-    val isMeterReplacement: Boolean
+data class MobileReadingRequest(
+    val clientOperationId: String,
+    val branchId: Long,
+    val subscriberId: Long,
+    val meterId: Long,
+    val readingValue: String,
+    val readingAt: String,
+    val captureMethod: String,
+    val isMeterReplacement: Boolean,
+    val fieldVerified: Boolean,
+    val latitude: Double? = null,
+    val longitude: Double? = null,
+    val notes: String? = null
 )
-
-data class PaymentUploadDto(
-    val subscriberId: String,
-    val amount: Double,
-    val paymentMethod: String,
-    val notes: String
-)
-
-data class BulkSyncRequest(
-    val readings: List<ReadingUploadDto>,
-    val payments: List<PaymentUploadDto>
-)
-
-data class BulkSyncResponse(
-    val success: Boolean,
-    val syncedReadingCount: Int,
-    val syncedPaymentCount: Int,
-    val message: String
-)
-
-data class UploadResponse(
-    val photoUrl: String
-)
+data class MobileReadingResponse(val id: Long, val status: String, val consumptionKwh: String?, val replayed: Boolean)
 
 interface FieldReadingApi {
-    @POST("api/auth/login")
-    suspend fun login(@Body request: LoginRequest): LoginResponse
+    @POST("api/mobile/v1/auth/login")
+    suspend fun login(@Body request: MobileLoginRequest): MobileSessionResponse
 
-    @GET("api/auth/me")
-    suspend fun getProfile(): UserProfile
+    @POST("api/mobile/v1/auth/refresh")
+    suspend fun refresh(@Body request: MobileRefreshRequest): MobileSessionResponse
 
-    @GET("api/field/subscribers")
-    suspend fun getSubscribers(): List<SubscriberDto>
+    @POST("api/mobile/v1/auth/logout")
+    suspend fun logout()
 
-    @POST("api/field/readings/bulk")
-    suspend fun syncBulk(@Body request: BulkSyncRequest): BulkSyncResponse
+    @GET("api/mobile/v1/auth/me")
+    suspend fun getProfile(): MobileMeResponse
 
-    @Multipart
-    @POST("api/field/upload")
-    suspend fun uploadPhoto(@Part photo: MultipartBody.Part): UploadResponse
+    @GET("api/mobile/v1/subscribers")
+    suspend fun getSubscribers(@Query("branchId") branchId: Long, @Query("limit") limit: Int = 100): MobileSubscribersResponse
 
-    @POST("api/auth/refresh")
-    suspend fun refreshToken(@Body refreshToken: String): LoginResponse
+    @POST("api/mobile/v1/readings")
+    suspend fun createReading(@Body request: MobileReadingRequest): MobileReadingResponse
 }

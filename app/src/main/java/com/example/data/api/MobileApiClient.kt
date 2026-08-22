@@ -1,0 +1,66 @@
+package com.example.data.api
+
+import android.content.Context
+import androidx.security.crypto.EncryptedSharedPreferences
+import androidx.security.crypto.MasterKey
+import com.example.BuildConfig
+import com.squareup.moshi.Moshi
+import com.squareup.moshi.kotlin.reflect.KotlinJsonAdapterFactory
+import okhttp3.Interceptor
+import okhttp3.OkHttpClient
+import retrofit2.Retrofit
+import retrofit2.converter.moshi.MoshiConverterFactory
+import java.util.concurrent.TimeUnit
+
+class MobileSessionStore(context: Context) {
+    private val masterKey = MasterKey.Builder(context).setKeyScheme(MasterKey.KeyScheme.AES256_GCM).build()
+    private val prefs = EncryptedSharedPreferences.create(
+        context,
+        "powerhub_mobile_session",
+        masterKey,
+        EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
+        EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM,
+    )
+
+    fun accessToken(): String? = prefs.getString("access_token", null)
+    fun refreshToken(): String? = prefs.getString("refresh_token", null)
+    fun isLoggedIn(): Boolean = !accessToken().isNullOrBlank() && !refreshToken().isNullOrBlank()
+    fun needsAccessRefresh(): Boolean = System.currentTimeMillis() >= prefs.getLong("access_expires_at", 0L) - 60_000L
+
+    fun save(session: MobileSessionResponse) {
+        prefs.edit()
+            .putString("access_token", session.accessToken)
+            .putString("refresh_token", session.refreshToken)
+            .putLong("access_expires_at", System.currentTimeMillis() + (session.expiresIn * 1000L))
+            .apply()
+    }
+
+    fun clear() = prefs.edit().clear().apply()
+}
+
+object MobileApiClient {
+    fun create(sessionStore: MobileSessionStore): FieldReadingApi {
+        val baseUrl = BuildConfig.POWERHUB_API_BASE_URL.trim()
+        require(baseUrl.startsWith("https://") || baseUrl.startsWith("http://")) { "عنوان PowerHub API غير مهيأ" }
+        val authInterceptor = Interceptor { chain ->
+            val request = chain.request().newBuilder().apply {
+                sessionStore.accessToken()?.takeIf { it.isNotBlank() }?.let { header("Authorization", "Bearer $it") }
+                header("Accept", "application/json")
+            }.build()
+            chain.proceed(request)
+        }
+        val client = OkHttpClient.Builder()
+            .addInterceptor(authInterceptor)
+            .connectTimeout(20, TimeUnit.SECONDS)
+            .readTimeout(30, TimeUnit.SECONDS)
+            .writeTimeout(30, TimeUnit.SECONDS)
+            .build()
+        val moshi = Moshi.Builder().addLast(KotlinJsonAdapterFactory()).build()
+        return Retrofit.Builder()
+            .baseUrl(if (baseUrl.endsWith("/")) baseUrl else "$baseUrl/")
+            .client(client)
+            .addConverterFactory(MoshiConverterFactory.create(moshi))
+            .build()
+            .create(FieldReadingApi::class.java)
+    }
+}
