@@ -411,7 +411,7 @@ fun DashboardScreen(
 
                 // Dense operations list
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    val allLocalPending = pendingReadings + pendingPayments
+                    val allLocalPending = pendingReadings
                     
                     if (allLocalPending.isEmpty()) {
                         Card(
@@ -426,7 +426,7 @@ fun DashboardScreen(
                                 contentAlignment = Alignment.Center
                             ) {
                                 Text(
-                                    text = "لا توجد أي عمليات فنية أو دفعات معلقة حالياً.",
+                                    text = "لا توجد أي قراءات ميدانية معلقة حالياً.",
                                     fontSize = 12.sp,
                                     color = Color.Gray
                                 )
@@ -435,11 +435,7 @@ fun DashboardScreen(
                     } else {
                         // Take last 5 operations
                         allLocalPending.takeLast(5).reversed().forEach { op ->
-                            val opSubId = when (op) {
-                                is PendingReadingEntity -> op.subscriberId
-                                is PendingPaymentEntity -> op.subscriberId
-                                else -> ""
-                            }
+                            val opSubId = op.subscriberId
                             // Look up subscriber info if we have list
                             val subInfo = subscribers.find { it.id == opSubId }
                             val subName = subInfo?.name ?: "مشترك رقم $opSubId"

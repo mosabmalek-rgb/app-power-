@@ -12,7 +12,7 @@ import com.example.data.repository.FieldReadingRepository
 
 class FieldReadingSyncWorker(appContext: Context, params: WorkerParameters) : CoroutineWorker(appContext, params) {
     override suspend fun doWork(): Result {
-        val repository = FieldReadingRepository(appContext, FieldReadingDatabase.getDatabase(appContext).dao())
+        val repository = FieldReadingRepository(applicationContext, FieldReadingDatabase.getDatabase(applicationContext).dao())
         return repository.syncAllData { _, _ -> }.fold(
             onSuccess = { Result.success() },
             onFailure = { Result.retry() }
