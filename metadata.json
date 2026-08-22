@@ -1,0 +1,6 @@
+{
+  "name": "PowerHub",
+  "description": "تطبيق PowerHub الميداني لمحصلي وفنيي شركات المولدات الكهربائية لإدخال قراءات العدادات والتحصيلات في الميدان مع ميزة العمل بدون إنترنت والمزامنة لاحقاً.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
