@@ -39,6 +39,21 @@ data class MobileReadingRequest(
     val notes: String? = null
 )
 data class MobileReadingResponse(val id: Long, val status: String, val consumptionKwh: String?, val replayed: Boolean)
+data class MobileSyncEventRequest(
+    val eventKey: String,
+    val branchId: Long,
+    val eventType: String,
+    val status: String,
+    val syncedCount: Int,
+    val retryableCount: Int,
+    val needsReviewCount: Int,
+    val errorCode: String? = null,
+    val errorMessage: String? = null,
+    val appVersion: String? = null,
+    val deviceLabel: String? = null,
+    val occurredAt: String
+)
+data class MobileSyncEventResponse(val id: Long, val replayed: Boolean)
 
 interface FieldReadingApi {
     @POST("api/mobile/v1/auth/login")
@@ -58,4 +73,7 @@ interface FieldReadingApi {
 
     @POST("api/mobile/v1/readings")
     suspend fun createReading(@Body request: MobileReadingRequest): MobileReadingResponse
+
+    @POST("api/mobile/v1/sync-events")
+    suspend fun createSyncEvent(@Body request: MobileSyncEventRequest): MobileSyncEventResponse
 }

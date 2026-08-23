@@ -1,17 +1,21 @@
 package com.example.data.repository
 
 import android.content.Context
+import android.os.Build
 import android.util.Base64
+import com.example.BuildConfig
 import com.example.data.FieldReadingDao
 import com.example.data.OfflineSyncPolicy
 import com.example.data.PendingPaymentEntity
 import com.example.data.PendingReadingEntity
+import com.example.data.PendingSyncEventEntity
 import com.example.data.SubscriberEntity
 import com.example.data.api.FieldReadingApi
 import com.example.data.api.MobileApiClient
 import com.example.data.api.MobileLoginRequest
 import com.example.data.api.MobileReadingRequest
 import com.example.data.api.MobileSessionStore
+import com.example.data.api.MobileSyncEventRequest
 import com.example.data.api.RemoteConfigRepository
 import kotlinx.coroutines.flow.Flow
 import retrofit2.HttpException
@@ -113,55 +117,66 @@ class FieldReadingRepository(
         })
     }
 
-    suspend fun syncAllData(onProgress: (Int, String) -> Unit): Result<SyncSummary> = runCatching {
-        ensureActiveAccessToken()
-        val branchId = activeBranchId()
-        if (branchId <= 0) throw IllegalStateException("حدّث قائمة المشتركين أولاً لتحديد الفرع المسموح.")
-        val readings = dao.getPendingReadingsWithStatus("pending") + dao.getPendingReadingsWithStatus("retryable")
-        if (readings.isEmpty()) return@runCatching SyncSummary(0, 0, 0)
-        var synced = 0
-        var retryable = 0
-        var needsReview = 0
-        readings.forEachIndexed { index, reading ->
-            onProgress(((index * 100) / readings.size).coerceAtLeast(5), "جارٍ إرسال قراءة ${index + 1} من ${readings.size}…")
-            try {
-                dao.updateReadingSyncState(reading.localId, "syncing", reading.retryCount, null, System.currentTimeMillis())
-                val image = reading.photoPath?.let { loadImagePayload(it) ?: throw PermanentSyncException("تعذر العثور على صورة العداد أو تجاوزت 5 ميغابايت.") }
-                val response = api.createReading(MobileReadingRequest(
-                    clientOperationId = reading.clientReferenceId,
-                    branchId = branchId,
-                    subscriberId = reading.subscriberId.toLong(),
-                    meterId = subscriberMeterId(reading.subscriberId),
-                    readingValue = String.format(Locale.US, "%.3f", reading.currentReading),
-                    readingAt = localDateToUtc(reading.readingDate),
-                    captureMethod = if (image == null) "manual" else "photo",
-                    isMeterReplacement = reading.isMeterReplacement,
-                    fieldVerified = reading.latitude != 0.0 || reading.longitude != 0.0,
-                    latitude = reading.latitude.takeIf { it != 0.0 },
-                    longitude = reading.longitude.takeIf { it != 0.0 },
-                    imageData = image?.first,
-                    imageMime = image?.second,
-                    notes = reading.notes.ifBlank { null }
-                ))
-                if (response.id > 0) {
-                    dao.updateReadingSyncState(reading.localId, "synced", reading.retryCount, null, System.currentTimeMillis())
-                    synced++
-                } else {
-                    dao.updateReadingSyncState(reading.localId, "retryable", reading.retryCount + 1, "رفض الخادم تأكيد القراءة؛ ستُعاد المحاولة تلقائياً.", System.currentTimeMillis())
-                    retryable++
-                }
-            } catch (error: Exception) {
-                val issue = classifySyncFailure(error)
-                dao.updateReadingSyncState(reading.localId, issue.status, reading.retryCount + 1, issue.message, System.currentTimeMillis())
-                if (issue.status == "needs_review") needsReview++ else retryable++
+    suspend fun syncAllData(onProgress: (Int, String) -> Unit): Result<SyncSummary> {
+        val outcome = runCatching {
+            ensureActiveAccessToken()
+            val branchId = activeBranchId()
+            if (branchId <= 0) throw IllegalStateException("حدّث قائمة المشتركين أولاً لتحديد الفرع المسموح.")
+            flushPendingSyncEvents()
+            val readings = dao.getPendingReadingsWithStatus("pending") + dao.getPendingReadingsWithStatus("retryable")
+            if (readings.isEmpty()) {
+                val summary = SyncSummary(0, 0, 0)
+                queueSyncEvent(branchId, "sync_cycle", "success", summary)
+                return@runCatching summary
             }
+            var synced = 0
+            var retryable = 0
+            var needsReview = 0
+            readings.forEachIndexed { index, reading ->
+                onProgress(((index * 100) / readings.size).coerceAtLeast(5), "جارٍ إرسال قراءة ${index + 1} من ${readings.size}…")
+                try {
+                    dao.updateReadingSyncState(reading.localId, "syncing", reading.retryCount, null, System.currentTimeMillis())
+                    val image = reading.photoPath?.let { loadImagePayload(it) ?: throw PermanentSyncException("تعذر العثور على صورة العداد أو تجاوزت 5 ميغابايت.") }
+                    val response = api.createReading(MobileReadingRequest(reading.clientReferenceId, branchId, reading.subscriberId.toLong(), subscriberMeterId(reading.subscriberId), String.format(Locale.US, "%.3f", reading.currentReading), localDateToUtc(reading.readingDate), if (image == null) "manual" else "photo", reading.isMeterReplacement, reading.latitude != 0.0 || reading.longitude != 0.0, reading.latitude.takeIf { it != 0.0 }, reading.longitude.takeIf { it != 0.0 }, image?.first, image?.second, reading.notes.ifBlank { null }))
+                    if (response.id > 0) { dao.updateReadingSyncState(reading.localId, "synced", reading.retryCount, null, System.currentTimeMillis()); synced++ }
+                    else {
+                        val message = "رفض الخادم تأكيد القراءة؛ ستُعاد المحاولة تلقائياً."
+                        dao.updateReadingSyncState(reading.localId, "retryable", reading.retryCount + 1, message, System.currentTimeMillis())
+                        queueSyncEvent(branchId, "sync_error", "retryable", SyncSummary(0, 1, 0), "READING_SYNC_UNCONFIRMED", message)
+                        retryable++
+                    }
+                } catch (error: Exception) {
+                    val issue = classifySyncFailure(error)
+                    dao.updateReadingSyncState(reading.localId, issue.status, reading.retryCount + 1, issue.message, System.currentTimeMillis())
+                    queueSyncEvent(branchId, "sync_error", issue.status, SyncSummary(0, if (issue.status == "needs_review") 0 else 1, if (issue.status == "needs_review") 1 else 0), if (issue.status == "needs_review") "READING_SYNC_REVIEW" else "READING_SYNC_RETRY", issue.message)
+                    if (issue.status == "needs_review") needsReview++ else retryable++
+                }
+            }
+            onProgress(100, "اكتمل إرسال القراءات: $synced ناجحة، $retryable ستُعاد تلقائياً، $needsReview تحتاج مراجعة.")
+            if (synced > 0) dao.clearSyncedReadings()
+            val summary = SyncSummary(synced, retryable, needsReview)
+            queueSyncEvent(branchId, "sync_cycle", when { needsReview > 0 -> "needs_review"; retryable > 0 -> "partial"; else -> "success" }, summary)
+            summary
         }
-        onProgress(100, "اكتمل إرسال القراءات: $synced ناجحة، $retryable ستُعاد تلقائياً، $needsReview تحتاج مراجعة.")
-        if (synced > 0) dao.clearSyncedReadings()
-        SyncSummary(synced, retryable, needsReview)
+        if (outcome.isFailure) {
+            activeBranchId().takeIf { it > 0 }?.let { branchId -> queueSyncEvent(branchId, "sync_error", "retryable", SyncSummary(0, 0, 0), "SYNC_CYCLE_ERROR", outcome.exceptionOrNull()?.message) }
+        }
+        return outcome
     }
 
     suspend fun requeueReadingForReview(localId: Int) = dao.requeueReadingForReview(localId)
+
+    private suspend fun queueSyncEvent(branchId: Long, eventType: String, status: String, summary: SyncSummary, errorCode: String? = null, errorMessage: String? = null) {
+        dao.insertPendingSyncEvent(PendingSyncEventEntity(branchId = branchId, eventType = eventType, status = status, syncedCount = summary.synced, retryableCount = summary.retryable, needsReviewCount = summary.needsReview, errorCode = errorCode, errorMessage = errorMessage?.take(1500)))
+        runCatching { flushPendingSyncEvents() }
+    }
+
+    private suspend fun flushPendingSyncEvents() {
+        dao.getPendingSyncEvents().forEach { event ->
+            api.createSyncEvent(MobileSyncEventRequest(event.eventKey, event.branchId, event.eventType, event.status, event.syncedCount, event.retryableCount, event.needsReviewCount, event.errorCode, event.errorMessage, BuildConfig.VERSION_NAME, deviceLabel(), epochToUtc(event.createdAt)))
+            dao.deletePendingSyncEvent(event.localId)
+        }
+    }
 
     private suspend fun subscriberMeterId(subscriberId: String): Long {
         val meterId = dao.getSubscriberById(subscriberId)?.meterId?.toLongOrNull()
@@ -185,6 +200,10 @@ class FieldReadingRepository(
         val parsed = SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.US).parse(value) ?: Date()
         return SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSS'Z'", Locale.US).apply { timeZone = TimeZone.getTimeZone("UTC") }.format(parsed)
     }
+
+    private fun epochToUtc(value: Long): String = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSS'Z'", Locale.US).apply { timeZone = TimeZone.getTimeZone("UTC") }.format(Date(value))
+
+    private fun deviceLabel(): String = "${Build.MANUFACTURER} ${Build.MODEL}".trim().take(160).ifBlank { "Android Field Reader" }
 
     private class PermanentSyncException(message: String) : IllegalStateException(message)
 

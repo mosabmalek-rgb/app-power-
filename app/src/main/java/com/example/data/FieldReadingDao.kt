@@ -41,6 +41,15 @@ interface FieldReadingDao {
     @Query("UPDATE pending_readings SET status = 'pending', lastError = NULL WHERE localId = :localId AND status = 'needs_review'")
     suspend fun requeueReadingForReview(localId: Int)
 
+    @Query("SELECT * FROM pending_sync_events ORDER BY createdAt ASC")
+    suspend fun getPendingSyncEvents(): List<PendingSyncEventEntity>
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertPendingSyncEvent(event: PendingSyncEventEntity): Long
+
+    @Query("DELETE FROM pending_sync_events WHERE localId = :localId")
+    suspend fun deletePendingSyncEvent(localId: Int)
+
     @Query("SELECT * FROM pending_payments ORDER BY createdAt DESC")
     fun getAllPendingPaymentsFlow(): Flow<List<PendingPaymentEntity>>
 

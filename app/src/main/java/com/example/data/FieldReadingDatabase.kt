@@ -11,9 +11,10 @@ import androidx.sqlite.db.SupportSQLiteDatabase
     entities = [
         SubscriberEntity::class,
         PendingReadingEntity::class,
-        PendingPaymentEntity::class
+        PendingPaymentEntity::class,
+        PendingSyncEventEntity::class
     ],
-    version = 3,
+    version = 4,
     exportSchema = false
 )
 abstract class FieldReadingDatabase : RoomDatabase() {
@@ -34,6 +35,12 @@ abstract class FieldReadingDatabase : RoomDatabase() {
             }
         }
 
+        private val MIGRATION_3_4 = object : Migration(3, 4) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("CREATE TABLE IF NOT EXISTS pending_sync_events (localId INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, eventKey TEXT NOT NULL, branchId INTEGER NOT NULL, eventType TEXT NOT NULL, status TEXT NOT NULL, syncedCount INTEGER NOT NULL DEFAULT 0, retryableCount INTEGER NOT NULL DEFAULT 0, needsReviewCount INTEGER NOT NULL DEFAULT 0, errorCode TEXT, errorMessage TEXT, createdAt INTEGER NOT NULL)")
+            }
+        }
+
         @Volatile
         private var INSTANCE: FieldReadingDatabase? = null
 
@@ -44,7 +51,7 @@ abstract class FieldReadingDatabase : RoomDatabase() {
                     FieldReadingDatabase::class.java,
                     "field_reading_database"
                 )
-                .addMigrations(MIGRATION_1_2, MIGRATION_2_3)
+                .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4)
                 .build()
                 INSTANCE = instance
                 instance
