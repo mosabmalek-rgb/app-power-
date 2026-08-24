@@ -79,7 +79,7 @@ fun SubscribersScreen(
             OutlinedTextField(
                 value = searchQuery,
                 onValueChange = { viewModel.updateSearchQuery(it) },
-                placeholder = { Text("بحث باسم المشترك، رقم العداد، أو الهاتف...") },
+                placeholder = { Text("بحث باسم المشترك، الرقم المرجعي، أو الهاتف...") },
                 leadingIcon = {
                     Icon(Icons.Default.Search, contentDescription = "بحث")
                 },
@@ -211,7 +211,7 @@ fun SubscriberCard(
                 horizontalArrangement = Arrangement.SpaceBetween
             ) {
                 Text(
-                    text = "رقم العداد: ${subscriber.refNumber}",
+                    text = "الرقم المرجعي: ${subscriber.refNumber}",
                     style = MaterialTheme.typography.bodySmall.copy(
                         color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
                     )

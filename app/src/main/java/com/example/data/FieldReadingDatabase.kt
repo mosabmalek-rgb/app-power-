@@ -14,7 +14,7 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         PendingPaymentEntity::class,
         PendingSyncEventEntity::class
     ],
-    version = 4,
+    version = 5,
     exportSchema = false
 )
 abstract class FieldReadingDatabase : RoomDatabase() {
@@ -41,6 +41,19 @@ abstract class FieldReadingDatabase : RoomDatabase() {
             }
         }
 
+        private val MIGRATION_4_5 = object : Migration(4, 5) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("CREATE TABLE subscribers_new (id TEXT NOT NULL PRIMARY KEY, refNumber TEXT NOT NULL, name TEXT NOT NULL, phone TEXT NOT NULL, address TEXT NOT NULL, branchId TEXT NOT NULL, lastReading REAL NOT NULL, lastReadingDate TEXT NOT NULL, balance REAL NOT NULL)")
+                db.execSQL("INSERT INTO subscribers_new (id, refNumber, name, phone, address, branchId, lastReading, lastReadingDate, balance) SELECT id, refNumber, name, phone, address, branchId, lastReading, lastReadingDate, balance FROM subscribers")
+                db.execSQL("DROP TABLE subscribers")
+                db.execSQL("ALTER TABLE subscribers_new RENAME TO subscribers")
+                db.execSQL("CREATE TABLE pending_readings_new (localId INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, subscriberId TEXT NOT NULL, currentReading REAL NOT NULL, readingDate TEXT NOT NULL, notes TEXT NOT NULL, latitude REAL NOT NULL, longitude REAL NOT NULL, photoPath TEXT, status TEXT NOT NULL, isReadingReset INTEGER NOT NULL DEFAULT 0, clientReferenceId TEXT NOT NULL, createdAt INTEGER NOT NULL, retryCount INTEGER NOT NULL DEFAULT 0, lastError TEXT, lastAttemptAt INTEGER)")
+                db.execSQL("INSERT INTO pending_readings_new (localId, subscriberId, currentReading, readingDate, notes, latitude, longitude, photoPath, status, isReadingReset, clientReferenceId, createdAt, retryCount, lastError, lastAttemptAt) SELECT localId, subscriberId, currentReading, readingDate, notes, latitude, longitude, photoPath, status, isMeterReplacement, clientReferenceId, createdAt, retryCount, lastError, lastAttemptAt FROM pending_readings")
+                db.execSQL("DROP TABLE pending_readings")
+                db.execSQL("ALTER TABLE pending_readings_new RENAME TO pending_readings")
+            }
+        }
+
         @Volatile
         private var INSTANCE: FieldReadingDatabase? = null
 
@@ -51,7 +64,7 @@ abstract class FieldReadingDatabase : RoomDatabase() {
                     FieldReadingDatabase::class.java,
                     "field_reading_database"
                 )
-                .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4)
+                .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5)
                 .build()
                 INSTANCE = instance
                 instance

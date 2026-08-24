@@ -48,7 +48,7 @@ fun AddReadingScreen(
 
     var currentReadingStr by remember { mutableStateOf("") }
     var notes by remember { mutableStateOf("") }
-    var isMeterReplacement by remember { mutableStateOf(false) }
+    var isReadingReset by remember { mutableStateOf(false) }
     var fieldVerified by remember { mutableStateOf(true) }
 
     var capturedPhotoPath by remember { mutableStateOf<String?>(null) }
@@ -71,7 +71,7 @@ fun AddReadingScreen(
     }
     val takePicture = rememberLauncherForActivityResult(ActivityResultContracts.TakePicture()) { success ->
         capturedPhotoPath = if (success) pendingPhotoPath else null
-        Toast.makeText(context, if (success) "تم التقاط صورة العداد." else "لم يتم حفظ الصورة.", Toast.LENGTH_SHORT).show()
+        Toast.makeText(context, if (success) "تم التقاط صورة القراءة." else "لم يتم حفظ الصورة.", Toast.LENGTH_SHORT).show()
     }
     LaunchedEffect(Unit) {
         if (ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED) updateLocation()
@@ -81,7 +81,7 @@ fun AddReadingScreen(
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("إدخال قراءة العداد", fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onPrimary) },
+                title = { Text("إدخال قراءة المشترك", fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onPrimary) },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
                         Icon(Icons.Default.ArrowBack, contentDescription = "رجوع", tint = MaterialTheme.colorScheme.onPrimary)
@@ -106,7 +106,7 @@ fun AddReadingScreen(
             
             val consumption = if (currentReadingStr.isEmpty()) {
                 0.0
-            } else if (isMeterReplacement) {
+            } else if (isReadingReset) {
                 currentReadingVal // Reset consumption or simply report current reading
             } else {
                 currentReadingVal - lastReading
@@ -139,7 +139,7 @@ fun AddReadingScreen(
                         Spacer(modifier = Modifier.height(4.dp))
                         Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
                             Text(
-                                text = "رقم العداد: ${sub.refNumber}",
+                                text = "الرقم المرجعي: ${sub.refNumber}",
                                 fontSize = 12.sp,
                                 color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
                             )
@@ -162,18 +162,18 @@ fun AddReadingScreen(
                 ) {
                     Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
                         
-                        // Option for Meter Replacement
+                        // Option for subscriber reading reset
                         Row(
                             modifier = Modifier.fillMaxWidth(),
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             Checkbox(
-                                checked = isMeterReplacement,
-                                onCheckedChange = { isMeterReplacement = it },
-                                modifier = Modifier.testTag("meter_replacement_checkbox")
+                                checked = isReadingReset,
+                                onCheckedChange = { isReadingReset = it },
+                                modifier = Modifier.testTag("reading_reset_checkbox")
                             )
                             Column {
-                                Text("تم استبدال العداد في الموقع", fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                                Text("إعادة ضبط سجل قراءة المشترك", fontWeight = FontWeight.Bold, fontSize = 13.sp)
                                 Text("تجاوز شرط أن القراءة الحالية أكبر من السابقة", fontSize = 11.sp, color = MaterialTheme.colorScheme.outline)
                             }
                         }
@@ -197,8 +197,8 @@ fun AddReadingScreen(
                                     currentReadingStr = input
                                 }
                             },
-                            label = { Text("القراءة الحالية لعداد الكهرباء") },
-                            placeholder = { Text("أدخل الأرقام الظاهرة على شاشة العداد") },
+                            label = { Text("القراءة الحالية للمشترك") },
+                            placeholder = { Text("أدخل قيمة القراءة الحالية") },
                             leadingIcon = { Icon(Icons.Default.Speed, contentDescription = null) },
                             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                             modifier = Modifier
@@ -210,7 +210,7 @@ fun AddReadingScreen(
 
                         // Auto-computed Consumption calculation banner
                         if (currentReadingStr.isNotEmpty()) {
-                            val isInvalid = !isMeterReplacement && currentReadingVal < lastReading
+                            val isInvalid = !isReadingReset && currentReadingVal < lastReading
                             
                             Card(
                                 colors = CardDefaults.cardColors(
@@ -222,14 +222,14 @@ fun AddReadingScreen(
                                 Column(modifier = Modifier.padding(12.dp)) {
                                     if (isInvalid) {
                                         Text(
-                                            text = "خطأ: القراءة الحالية يجب أن تكون أكبر من أو تساوي السابقة ($lastReading) إلا في حال تفعيل خيار استبدال العداد أعلاه.",
+                                            text = "خطأ: القراءة الحالية يجب أن تكون أكبر من أو تساوي السابقة ($lastReading) إلا في حال تفعيل إعادة ضبط سجل القراءة أعلاه.",
                                             color = MaterialTheme.colorScheme.onErrorContainer,
                                             fontWeight = FontWeight.Bold,
                                             fontSize = 12.sp
                                         )
                                     } else {
                                         Text(
-                                            text = if (isMeterReplacement) "نمط استبدال العداد: تصفير واحتساب قراءة البداية"
+                                            text = if (isReadingReset) "نمط إعادة الضبط: احتساب القراءة الحالية كبداية جديدة"
                                                    else "الاستهلاك الحالي المحتسب تلقائياً: ${consumption} كيلو واط /ساعة",
                                             color = MaterialTheme.colorScheme.onPrimaryContainer,
                                             fontWeight = FontWeight.Bold,
@@ -258,13 +258,13 @@ fun AddReadingScreen(
                             horizontalArrangement = Arrangement.SpaceBetween
                         ) {
                             Column(modifier = Modifier.weight(1f)) {
-                                Text("صورة العداد الميداني", fontWeight = FontWeight.Bold, fontSize = 13.sp)
-                                Text("التقاط صورة للعداد لإرفاقها كإثبات للقراءة", fontSize = 11.sp, color = MaterialTheme.colorScheme.outline)
+                                Text("صورة القراءة الميدانية", fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                                Text("التقاط صورة لإرفاقها كإثبات للقراءة", fontSize = 11.sp, color = MaterialTheme.colorScheme.outline)
                             }
                             
                             Button(
                                 onClick = {
-                                    val photoFile = File(context.cacheDir, "meter_${System.currentTimeMillis()}.jpg")
+                                    val photoFile = File(context.cacheDir, "reading_${System.currentTimeMillis()}.jpg")
                                     val uri = FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", photoFile)
                                     pendingPhotoUri = uri
                                     pendingPhotoPath = photoFile.absolutePath
@@ -291,7 +291,7 @@ fun AddReadingScreen(
                                 // Show our generated logo as placeholder meter visual
                                 Image(
                                     painter = painterResource(id = R.drawable.powerhub_logo_foreground_1787388603387),
-                                    contentDescription = "صورة العداد الملتقطة",
+                                    contentDescription = "صورة القراءة الملتقطة",
                                     contentScale = ContentScale.Crop,
                                     modifier = Modifier.fillMaxSize()
                                 )
@@ -302,7 +302,7 @@ fun AddReadingScreen(
                                     contentAlignment = Alignment.BottomCenter
                                 ) {
                                     Text(
-                                        text = "معاينة صورة العداد المقترنة بالقراءة",
+                                        text = "معاينة صورة القراءة المقترنة بالقراءة",
                                         color = androidx.compose.ui.graphics.Color.White,
                                         fontSize = 11.sp,
                                         modifier = Modifier.padding(8.dp)
@@ -335,7 +335,7 @@ fun AddReadingScreen(
                                         fontWeight = FontWeight.Bold
                                     )
                                 } else {
-                                    Text("جاري استخلاص موقع العداد الجغرافي...", fontSize = 11.sp, color = MaterialTheme.colorScheme.outline)
+                                    Text("جاري استخلاص موقع القراءة الجغرافي...", fontSize = 11.sp, color = MaterialTheme.colorScheme.outline)
                                 }
                             }
                         }
@@ -353,8 +353,8 @@ fun AddReadingScreen(
                                 modifier = Modifier.testTag("field_verified_checkbox")
                             )
                             Column {
-                                Text("تم التحقق ميدانياً وبصرياً من سلامة العداد", fontWeight = FontWeight.Bold, fontSize = 13.sp)
-                                Text("يؤكد الفني خلو العداد من التلاعب أو الأعطال", fontSize = 11.sp, color = MaterialTheme.colorScheme.outline)
+                                Text("تم التحقق ميدانياً وبصرياً من القراءة", fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                                Text("يؤكد الفني صحة القراءة والصورة المرفقة", fontSize = 11.sp, color = MaterialTheme.colorScheme.outline)
                             }
                         }
                     }
@@ -365,7 +365,7 @@ fun AddReadingScreen(
                     value = notes,
                     onValueChange = { notes = it },
                     label = { Text("ملاحظات ميدانية إضافية") },
-                    placeholder = { Text("أدخل أي ملاحظات حول العداد أو موقع العميل...") },
+                    placeholder = { Text("أدخل أي ملاحظات حول القراءة أو موقع العميل...") },
                     leadingIcon = { Icon(Icons.Default.Comment, contentDescription = null) },
                     modifier = Modifier.fillMaxWidth().testTag("notes_input_field"),
                     shape = RoundedCornerShape(10.dp)
@@ -389,7 +389,7 @@ fun AddReadingScreen(
                             latitude = latitude ?: 0.0,
                             longitude = longitude ?: 0.0,
                             photoPath = capturedPhotoPath,
-                            isMeterReplacement = isMeterReplacement
+                            isReadingReset = isReadingReset
                         ) { success, message ->
                             Toast.makeText(context, message, Toast.LENGTH_LONG).show()
                             if (success) {

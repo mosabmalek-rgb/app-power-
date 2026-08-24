@@ -15,8 +15,6 @@ data class MobileSubscriberDto(
     val phone: String,
     val address: String?,
     val branchId: Long,
-    val meterId: Long,
-    val meterSerial: String,
     val lastReading: String?,
     val lastReadingAt: String?
 )
@@ -26,11 +24,10 @@ data class MobileReadingRequest(
     val clientOperationId: String,
     val branchId: Long,
     val subscriberId: Long,
-    val meterId: Long,
     val readingValue: String,
     val readingAt: String,
     val captureMethod: String,
-    val isMeterReplacement: Boolean,
+    val isReadingReset: Boolean,
     val fieldVerified: Boolean,
     val latitude: Double? = null,
     val longitude: Double? = null,

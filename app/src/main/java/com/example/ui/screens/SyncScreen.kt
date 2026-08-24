@@ -75,7 +75,7 @@ fun SyncScreen(
                     
                     Divider()
 
-                    SyncQueueRow(label = "عدد قراءات العدادات المعلقة", value = pendingReadingsCount.toString(), color = MaterialTheme.colorScheme.primary)
+                    SyncQueueRow(label = "عدد قراءات المشتركين المعلقة", value = pendingReadingsCount.toString(), color = MaterialTheme.colorScheme.primary)
                     SyncQueueRow(label = "إعادة محاولة تلقائية", value = retryableReadings.size.toString(), color = MaterialTheme.colorScheme.tertiary)
                     SyncQueueRow(label = "تحتاج مراجعة الفني", value = needsReviewReadings.size.toString(), color = MaterialTheme.colorScheme.error)
                     SyncQueueRow(label = "عدد الصور والملفات المرفقة", value = pendingReadings.count { it.photoPath != null && it.status != "synced" }.toString(), color = MaterialTheme.colorScheme.secondary)

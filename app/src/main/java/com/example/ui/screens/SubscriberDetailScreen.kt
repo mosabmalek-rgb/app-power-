@@ -107,7 +107,7 @@ fun SubscriberDetailScreen(
                         Divider(modifier = Modifier.padding(vertical = 12.dp))
 
                         DetailRow(label = "الاسم بالكامل", value = sub.name)
-                        DetailRow(label = "الرقم المرجعي (العداد)", value = sub.refNumber)
+                        DetailRow(label = "الرقم المرجعي", value = sub.refNumber)
                         DetailRow(label = "رقم جوال العميل", value = sub.phone)
                         DetailRow(label = "العنوان الوطني", value = sub.address)
                         DetailRow(label = "رمز فرع التغطية", value = sub.branchId)
@@ -206,11 +206,11 @@ fun SubscriberDetailScreen(
                         )
                         subReadings.forEach { reading ->
                             HistoryItem(
-                                title = "قراءة عداد: ${reading.currentReading} ك.و",
+                                title = "قراءة المشترك: ${reading.currentReading} ك.و",
                                 date = reading.readingDate,
                                 status = reading.status,
                                 isReading = true,
-                                extra = if (reading.isMeterReplacement) "تغيير عداد" else null
+                                extra = if (reading.isReadingReset) "إعادة ضبط سجل القراءة" else null
                             )
                         }
                     }

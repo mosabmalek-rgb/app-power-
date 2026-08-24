@@ -139,7 +139,7 @@ class FieldReadingViewModel(application: Application) : AndroidViewModel(applica
         latitude: Double,
         longitude: Double,
         photoPath: String?,
-        isMeterReplacement: Boolean,
+        isReadingReset: Boolean,
         onResult: (Boolean, String) -> Unit
     ) {
         viewModelScope.launch {
@@ -150,7 +150,7 @@ class FieldReadingViewModel(application: Application) : AndroidViewModel(applica
                 latitude = latitude,
                 longitude = longitude,
                 photoPath = photoPath,
-                isMeterReplacement = isMeterReplacement
+                isReadingReset = isReadingReset
             )
             if (result.isSuccess) {
                 FieldReadingSyncWorker.enqueue(getApplication())
