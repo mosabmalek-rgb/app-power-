@@ -6,7 +6,9 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.*
+import androidx.compose.material.icons.filled.ArrowBack
+import androidx.compose.material.icons.filled.Person
+import androidx.compose.material.icons.filled.Speed
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -26,7 +28,6 @@ fun SubscriberDetailScreen(
 ) {
     val subscriber by viewModel.selectedSubscriber.collectAsState()
     val pendingReadings by viewModel.pendingReadings.collectAsState()
-    val pendingPayments by viewModel.pendingPayments.collectAsState()
 
     Scaffold(
         topBar = {
@@ -64,10 +65,7 @@ fun SubscriberDetailScreen(
             }
         } else {
             val sub = subscriber!!
-            
-            // Filter local logs for this subscriber
             val subReadings = pendingReadings.filter { it.subscriberId == sub.id }
-            val subPayments = pendingPayments.filter { it.subscriberId == sub.id }
 
             Column(
                 modifier = Modifier
@@ -78,7 +76,6 @@ fun SubscriberDetailScreen(
                     .padding(16.dp),
                 verticalArrangement = Arrangement.spacedBy(16.dp)
             ) {
-                // Main Subscriber Card Detail
                 Card(
                     modifier = Modifier.fillMaxWidth(),
                     shape = RoundedCornerShape(16.dp),
@@ -104,7 +101,7 @@ fun SubscriberDetailScreen(
                             )
                         }
 
-                        Divider(modifier = Modifier.padding(vertical = 12.dp))
+                        HorizontalDivider(modifier = Modifier.padding(vertical = 12.dp))
 
                         DetailRow(label = "الاسم بالكامل", value = sub.name)
                         DetailRow(label = "الرقم المرجعي", value = sub.refNumber)
@@ -114,7 +111,6 @@ fun SubscriberDetailScreen(
                         DetailRow(label = "آخر قراءة مقيدة", value = "${sub.lastReading} ك.و/س")
                         DetailRow(label = "تاريخ آخر قراءة", value = sub.lastReadingDate)
 
-                        // Balance row
                         val balanceColor = if (sub.balance > 0) {
                             MaterialTheme.colorScheme.error
                         } else if (sub.balance < 0) {
@@ -122,8 +118,8 @@ fun SubscriberDetailScreen(
                         } else {
                             MaterialTheme.colorScheme.onSurface
                         }
-                        
-                        Divider(modifier = Modifier.padding(vertical = 12.dp))
+
+                        HorizontalDivider(modifier = Modifier.padding(vertical = 12.dp))
 
                         Row(
                             modifier = Modifier.fillMaxWidth(),
@@ -145,7 +141,6 @@ fun SubscriberDetailScreen(
                     }
                 }
 
-                // Action Buttons
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.spacedBy(12.dp)
@@ -153,7 +148,7 @@ fun SubscriberDetailScreen(
                     Button(
                         onClick = onNavigateToAddReading,
                         modifier = Modifier
-                            .weight(1.5f)
+                            .weight(1f)
                             .height(52.dp)
                             .testTag("action_add_reading"),
                         shape = RoundedCornerShape(12.dp)
@@ -162,19 +157,17 @@ fun SubscriberDetailScreen(
                         Spacer(modifier = Modifier.width(6.dp))
                         Text("قيد قراءة جديدة", fontWeight = FontWeight.Bold, fontSize = 14.sp)
                     }
-
                 }
 
-                // Operations History List Header
                 Text(
-                    text = "سجل العمليات المحلية المعلقة",
+                    text = "سجل القراءات المحلية المعلقة",
                     style = MaterialTheme.typography.titleMedium,
                     fontWeight = FontWeight.Bold,
                     color = MaterialTheme.colorScheme.onBackground,
                     modifier = Modifier.padding(top = 8.dp)
                 )
 
-                if (subReadings.isEmpty() && subPayments.isEmpty()) {
+                if (subReadings.isEmpty()) {
                     Card(
                         modifier = Modifier.fillMaxWidth(),
                         shape = RoundedCornerShape(12.dp),
@@ -189,32 +182,28 @@ fun SubscriberDetailScreen(
                             contentAlignment = Alignment.Center
                         ) {
                             Text(
-                                "لا توجد أي قراءات أو دفعات مسجلة محلياً لهذا المشترك بعد.",
+                                "لا توجد أي قراءات مسجلة محلياً لهذا المشترك بعد.",
                                 fontSize = 12.sp,
                                 color = MaterialTheme.colorScheme.outline
                             )
                         }
                     }
                 } else {
-                    // Display Readings local logs
-                    if (subReadings.isNotEmpty()) {
-                        Text(
-                            text = "القراءات غير المزامنة:",
-                            style = MaterialTheme.typography.titleSmall,
-                            fontWeight = FontWeight.Bold,
-                            color = MaterialTheme.colorScheme.primary
+                    Text(
+                        text = "القراءات غير المزامنة:",
+                        style = MaterialTheme.typography.titleSmall,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.primary
+                    )
+                    subReadings.forEach { reading ->
+                        HistoryItem(
+                            title = "قراءة المشترك: ${reading.currentReading} ك.و",
+                            date = reading.readingDate,
+                            status = reading.status,
+                            isReading = true,
+                            extra = if (reading.isReadingReset) "إعادة ضبط سجل القراءة" else null
                         )
-                        subReadings.forEach { reading ->
-                            HistoryItem(
-                                title = "قراءة المشترك: ${reading.currentReading} ك.و",
-                                date = reading.readingDate,
-                                status = reading.status,
-                                isReading = true,
-                                extra = if (reading.isReadingReset) "إعادة ضبط سجل القراءة" else null
-                            )
-                        }
                     }
-
                 }
 
                 Spacer(modifier = Modifier.height(24.dp))
@@ -273,9 +262,9 @@ fun HistoryItem(
         ) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Icon(
-                    imageVector = if (isReading) Icons.Default.Speed else Icons.Default.Payment,
+                    imageVector = Icons.Default.Speed,
                     contentDescription = null,
-                    tint = if (isReading) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.secondary,
+                    tint = MaterialTheme.colorScheme.primary,
                     modifier = Modifier.size(20.dp)
                 )
                 Spacer(modifier = Modifier.width(10.dp))
@@ -309,7 +298,6 @@ fun HistoryItem(
                 }
             }
 
-            // Sync Badge status
             val badgeColor = when (status) {
                 "synced" -> MaterialTheme.colorScheme.primary
                 "pending" -> MaterialTheme.colorScheme.outline
