@@ -32,6 +32,10 @@ class FieldReadingViewModel(application: Application) : AndroidViewModel(applica
     private val _savedUsername = MutableStateFlow(repository.getSavedUsername())
     val savedUsername: StateFlow<String> = _savedUsername.asStateFlow()
 
+    fun hasLocalPin(): Boolean = repository.hasLocalPin()
+    fun setLocalPin(pin: String): Boolean = runCatching { repository.setLocalPin(pin); true }.getOrDefault(false)
+    fun verifyLocalPin(pin: String): Boolean = repository.verifyLocalPin(pin)
+
     private val _loginError = MutableStateFlow<String?>(null)
     val loginError: StateFlow<String?> = _loginError.asStateFlow()
 

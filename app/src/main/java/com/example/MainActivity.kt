@@ -34,7 +34,11 @@ class MainActivity : ComponentActivity() {
             val navController = rememberNavController()
             val viewModel: FieldReadingViewModel = viewModel()
             
-            val startDestination = if (viewModel.isLoggedIn.value) "dashboard" else "login"
+            val startDestination = when {
+              !viewModel.isLoggedIn.value -> "login"
+              viewModel.hasLocalPin() -> "pin_unlock"
+              else -> "pin_setup"
+            }
 
             NavHost(
               navController = navController,
@@ -42,10 +46,25 @@ class MainActivity : ComponentActivity() {
             ) {
               composable("login") {
                 LoginScreen(viewModel = viewModel) {
-                  navController.navigate("dashboard") {
+                  navController.navigate("pin_setup") {
                     popUpTo("login") { inclusive = true }
                   }
                 }
+              }
+
+              composable("pin_setup") {
+                PinScreen(viewModel = viewModel, setupMode = true, onSuccess = {
+                  navController.navigate("dashboard") { popUpTo("pin_setup") { inclusive = true } }
+                })
+              }
+
+              composable("pin_unlock") {
+                PinScreen(viewModel = viewModel, setupMode = false, onSuccess = {
+                  navController.navigate("dashboard") { popUpTo("pin_unlock") { inclusive = true } }
+                }, onLogout = {
+                  viewModel.logout()
+                  navController.navigate("login") { popUpTo("pin_unlock") { inclusive = true } }
+                })
               }
 
               composable("dashboard") {

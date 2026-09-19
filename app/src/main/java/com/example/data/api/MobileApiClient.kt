@@ -11,6 +11,7 @@ import okhttp3.OkHttpClient
 import retrofit2.Retrofit
 import retrofit2.converter.moshi.MoshiConverterFactory
 import java.util.concurrent.TimeUnit
+import java.security.MessageDigest
 
 class MobileSessionStore(context: Context) {
     private val masterKey = MasterKey.Builder(context).setKeyScheme(MasterKey.KeyScheme.AES256_GCM).build()
@@ -26,6 +27,19 @@ class MobileSessionStore(context: Context) {
     fun refreshToken(): String? = prefs.getString("refresh_token", null)
     fun isLoggedIn(): Boolean = !accessToken().isNullOrBlank() && !refreshToken().isNullOrBlank()
     fun needsAccessRefresh(): Boolean = System.currentTimeMillis() >= prefs.getLong("access_expires_at", 0L) - 60_000L
+
+    fun hasLocalPin(): Boolean = !prefs.getString("local_pin_hash", null).isNullOrBlank()
+
+    fun setLocalPin(pin: String) {
+        require(pin.matches(Regex("\\d{4}"))) { "PIN must contain exactly four digits" }
+        prefs.edit().putString("local_pin_hash", hashPin(pin)).apply()
+    }
+
+    fun verifyLocalPin(pin: String): Boolean = hasLocalPin() &&
+        MessageDigest.isEqual(hashPin(pin).toByteArray(), prefs.getString("local_pin_hash", "").orEmpty().toByteArray())
+
+    private fun hashPin(pin: String): String = MessageDigest.getInstance("SHA-256")
+        .digest(pin.toByteArray(Charsets.UTF_8)).joinToString("") { "%02x".format(it) }
 
     fun save(session: MobileSessionResponse) {
         prefs.edit()

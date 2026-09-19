@@ -44,6 +44,9 @@ class FieldReadingRepository(
     private val prefs = context.getSharedPreferences("field_reading_prefs", Context.MODE_PRIVATE)
 
     fun isLoggedIn(): Boolean = sessionStore.isLoggedIn()
+    fun hasLocalPin(): Boolean = sessionStore.hasLocalPin()
+    fun setLocalPin(pin: String) = sessionStore.setLocalPin(pin)
+    fun verifyLocalPin(pin: String): Boolean = sessionStore.verifyLocalPin(pin)
     fun getUserName(): String = prefs.getString("user_name", "") ?: ""
     fun getUserRole(): String = prefs.getString("user_role", "") ?: ""
     fun getCompanyName(): String = prefs.getString("company_name", "PowerHub") ?: "PowerHub"
