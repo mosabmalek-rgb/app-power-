@@ -34,6 +34,7 @@ import androidx.core.content.ContextCompat
 import androidx.core.content.FileProvider
 import androidx.compose.animation.AnimatedVisibility
 import com.example.R
+import com.example.data.MeterReadingOcr
 import com.example.ui.FieldReadingViewModel
 import com.google.android.gms.location.LocationServices
 import java.io.File
@@ -55,6 +56,9 @@ fun AddReadingScreen(
     var capturedPhotoPath by remember { mutableStateOf<String?>(null) }
     var pendingPhotoUri by remember { mutableStateOf<Uri?>(null) }
     var pendingPhotoPath by remember { mutableStateOf<String?>(null) }
+    var extractedReading by remember { mutableStateOf<String?>(null) }
+    var ocrMessage by remember { mutableStateOf<String?>(null) }
+    var readingApproved by remember { mutableStateOf(false) }
     var latitude by remember { mutableStateOf<Double?>(null) }
     var longitude by remember { mutableStateOf<Double?>(null) }
     var gpsReady by remember { mutableStateOf(false) }
@@ -72,6 +76,16 @@ fun AddReadingScreen(
     }
     val takePicture = rememberLauncherForActivityResult(ActivityResultContracts.TakePicture()) { success ->
         capturedPhotoPath = if (success) pendingPhotoPath else null
+        extractedReading = null
+        ocrMessage = null
+        readingApproved = false
+        if (success && pendingPhotoUri != null) {
+            MeterReadingOcr.extract(context, pendingPhotoUri!!) { value, message ->
+                extractedReading = value
+                ocrMessage = message
+                if (value != null) currentReadingStr = value
+            }
+        }
         Toast.makeText(context, if (success) "تم التقاط صورة القراءة." else "لم يتم حفظ الصورة.", Toast.LENGTH_SHORT).show()
     }
     LaunchedEffect(Unit) {
@@ -190,6 +204,25 @@ fun AddReadingScreen(
                             }
                         }
 
+                        if (capturedPhotoPath != null && (extractedReading != null || ocrMessage != null)) {
+                            Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.secondaryContainer), modifier = Modifier.fillMaxWidth()) {
+                                Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                                    Text("الرقم المستخلص من الصورة", fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                                    if (extractedReading != null) {
+                                        OutlinedTextField(value = extractedReading!!, onValueChange = { extractedReading = it; readingApproved = false }, label = { Text("القراءة المستخلصة") }, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), modifier = Modifier.fillMaxWidth().testTag("ocr_reading_input"), singleLine = true)
+                                        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                            OutlinedButton(onClick = { readingApproved = false; currentReadingStr = extractedReading.orEmpty() }, modifier = Modifier.weight(1f).testTag("change_ocr_reading_button")) { Text("تغيير القراءة") }
+                                            Button(onClick = { currentReadingStr = extractedReading.orEmpty(); readingApproved = true }, modifier = Modifier.weight(1f).testTag("approve_ocr_reading_button")) { Text("اعتماد القراءة") }
+                                        }
+                                        Text(if (readingApproved) "تم اعتماد الرقم المستخلص، ويمكن حفظ القراءة." else "راجع الرقم ثم اضغط اعتماد القراءة قبل الحفظ.", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSecondaryContainer)
+                                    } else {
+                                        Text(ocrMessage ?: "لم يتم استخراج رقم واضح.", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSecondaryContainer)
+                                        OutlinedButton(onClick = { currentReadingStr = ""; ocrMessage = null }, modifier = Modifier.testTag("change_ocr_reading_button")) { Text("تغيير القراءة وإدخالها يدوياً") }
+                                    }
+                                }
+                            }
+                        }
+
                         HorizontalDivider()
                         Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                             Icon(imageVector = if (gpsReady) Icons.Default.GpsFixed else Icons.Default.GpsNotFixed, contentDescription = null, tint = if (gpsReady) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline, modifier = Modifier.size(24.dp))
@@ -218,6 +251,10 @@ fun AddReadingScreen(
                         val readingVal = currentReadingStr.toDoubleOrNull()
                         if (readingVal == null) {
                             Toast.makeText(context, "الرجاء إدخال رقم قراءة صحيح أولاً", Toast.LENGTH_SHORT).show()
+                            return@Button
+                        }
+                        if (capturedPhotoPath != null && !readingApproved) {
+                            Toast.makeText(context, "راجع القراءة المستخلصة واضغط اعتماد القراءة أولاً.", Toast.LENGTH_SHORT).show()
                             return@Button
                         }
                         viewModel.saveReading(subscriberId = sub.id, currentReading = readingVal, notes = notes, latitude = latitude ?: 0.0, longitude = longitude ?: 0.0, photoPath = capturedPhotoPath, isReadingReset = isReadingReset) { success, message ->
