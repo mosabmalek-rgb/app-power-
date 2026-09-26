@@ -15,6 +15,7 @@ data class PendingReadingEntity(
     val photoPath: String?,
     val status: String, // "pending", "syncing", "retryable", "needs_review", "synced"
     val isReadingReset: Boolean = false,
+    val fieldVerified: Boolean = true,
     val clientReferenceId: String = java.util.UUID.randomUUID().toString(),
     val createdAt: Long = System.currentTimeMillis(),
     val retryCount: Int = 0,
