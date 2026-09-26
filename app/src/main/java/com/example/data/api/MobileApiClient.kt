@@ -27,6 +27,8 @@ class MobileSessionStore(context: Context) {
     fun refreshToken(): String? = prefs.getString("refresh_token", null)
     fun isLoggedIn(): Boolean = !accessToken().isNullOrBlank() && !refreshToken().isNullOrBlank()
     fun needsAccessRefresh(): Boolean = System.currentTimeMillis() >= prefs.getLong("access_expires_at", 0L) - 60_000L
+    fun subscriptionEndsAt(): Long? = prefs.getLong("subscription_ends_at", 0L).takeIf { it > 0L }
+    fun subscriptionAllowsOfflineNow(): Boolean = subscriptionEndsAt()?.let { System.currentTimeMillis() < it } == true
 
     fun hasLocalPin(): Boolean = !prefs.getString("local_pin_hash", null).isNullOrBlank()
 
@@ -46,6 +48,7 @@ class MobileSessionStore(context: Context) {
             .putString("access_token", session.accessToken)
             .putString("refresh_token", session.refreshToken)
             .putLong("access_expires_at", System.currentTimeMillis() + (session.expiresIn * 1000L))
+            .putLong("subscription_ends_at", java.time.Instant.parse(session.user.subscriptionEndsAt).toEpochMilli())
             .apply()
     }
 
