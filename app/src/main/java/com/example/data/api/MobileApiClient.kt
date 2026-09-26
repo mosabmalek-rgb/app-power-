@@ -28,7 +28,14 @@ class MobileSessionStore(context: Context) {
     fun isLoggedIn(): Boolean = !accessToken().isNullOrBlank() && !refreshToken().isNullOrBlank()
     fun needsAccessRefresh(): Boolean = System.currentTimeMillis() >= prefs.getLong("access_expires_at", 0L) - 60_000L
     fun subscriptionEndsAt(): Long? = prefs.getLong("subscription_ends_at", 0L).takeIf { it > 0L }
-    fun subscriptionAllowsOfflineNow(): Boolean = subscriptionEndsAt()?.let { System.currentTimeMillis() < it } == true
+    fun subscriptionAllowsOfflineNow(): Boolean {
+        val now = System.currentTimeMillis()
+        val lastSeen = prefs.getLong("last_wall_clock_ms", 0L)
+        if (lastSeen > 0L && now + 5 * 60_000L < lastSeen) return false
+        val endsAt = subscriptionEndsAt() ?: return false
+        prefs.edit().putLong("last_wall_clock_ms", maxOf(now, lastSeen)).apply()
+        return now < endsAt
+    }
 
     fun hasLocalPin(): Boolean = !prefs.getString("local_pin_hash", null).isNullOrBlank()
 
@@ -49,6 +56,7 @@ class MobileSessionStore(context: Context) {
             .putString("refresh_token", session.refreshToken)
             .putLong("access_expires_at", System.currentTimeMillis() + (session.expiresIn * 1000L))
             .putLong("subscription_ends_at", java.time.Instant.parse(session.user.subscriptionEndsAt).toEpochMilli())
+            .putLong("last_wall_clock_ms", System.currentTimeMillis())
             .apply()
     }
 
