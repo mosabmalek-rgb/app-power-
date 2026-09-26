@@ -35,9 +35,6 @@ jobs:
           & sdkmanager.bat "platform-tools" "platforms;android-36.1" "build-tools;36.0.0"
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
-      - name: Set up Gradle cache
-        uses: gradle/actions/setup-gradle@v4
-
       - name: Run unit tests and assemble debug APK
         run: .\\gradlew.bat testDebugUnitTest assembleDebug --no-daemon --no-configuration-cache
 
