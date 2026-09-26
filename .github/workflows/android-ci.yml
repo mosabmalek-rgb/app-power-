@@ -17,26 +17,43 @@ jobs:
       - name: Check out source
         uses: actions/checkout@v4
 
-      - name: Set up Java 21
-        uses: actions/setup-java@v4
-        with:
-          distribution: temurin
-          java-version: "21"
-          cache: gradle
-
-      - name: Set up Android SDK
-        uses: android-actions/setup-android@v3
+      - name: Verify local Android build environment
+        shell: pwsh
+        run: |
+          java -version
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          if (-not $env:ANDROID_HOME -and -not $env:ANDROID_SDK_ROOT) {
+            Write-Error "ANDROID_HOME/ANDROID_SDK_ROOT is not configured on the self-hosted runner."
+            exit 1
+          }
+          $sdkRoot = if ($env:ANDROID_SDK_ROOT) { $env:ANDROID_SDK_ROOT } else { $env:ANDROID_HOME }
+          $sdkManager = Join-Path $sdkRoot "cmdline-tools\latest\bin\sdkmanager.bat"
+          if (-not (Test-Path $sdkManager)) {
+            $sdkManager = Join-Path $sdkRoot "tools\bin\sdkmanager.bat"
+          }
+          if (-not (Test-Path $sdkManager)) {
+            Write-Error "sdkmanager.bat was not found under $sdkRoot."
+            exit 1
+          }
+          & $sdkManager --version
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - name: Install required Android components
         shell: pwsh
         run: |
+          $sdkRoot = if ($env:ANDROID_SDK_ROOT) { $env:ANDROID_SDK_ROOT } else { $env:ANDROID_HOME }
+          $sdkManager = Join-Path $sdkRoot "cmdline-tools\latest\bin\sdkmanager.bat"
+          if (-not (Test-Path $sdkManager)) {
+            $sdkManager = Join-Path $sdkRoot "tools\bin\sdkmanager.bat"
+          }
           $yes = (1..100 | ForEach-Object { "y" }) -join "`n"
-          $yes | & sdkmanager.bat --licenses
-          & sdkmanager.bat "platform-tools" "platforms;android-36.1" "build-tools;36.0.0"
+          $yes | & $sdkManager --licenses
+          & $sdkManager "platform-tools" "platforms;android-36.1" "build-tools;36.0.0"
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - name: Run unit tests and assemble debug APK
-        run: .\\gradlew.bat testDebugUnitTest assembleDebug --no-daemon --no-configuration-cache
+        shell: pwsh
+        run: .\gradlew.bat testDebugUnitTest assembleDebug --no-daemon --no-configuration-cache
 
       - name: Upload debug APK
         uses: actions/upload-artifact@v4
