@@ -39,6 +39,8 @@ class FieldReadingRepository(
     private val dao: FieldReadingDao,
     private val sessionStore: MobileSessionStore = MobileSessionStore(context)
 ) {
+    private fun requireSubscriptionForOffline() { if (!sessionStore.subscriptionAllowsOfflineNow()) throw IllegalStateException("انتهت صلاحية اشتراك PowerHub. يلزم تجديد الاشتراك والاتصال بالإنترنت.") }
+
     private val remoteConfig = RemoteConfigRepository(context)
     private var api: FieldReadingApi = MobileApiClient.create(sessionStore, remoteConfig.activeApiUrl())
     private val prefs = context.getSharedPreferences("field_reading_prefs", Context.MODE_PRIVATE)
