@@ -17,37 +17,47 @@ jobs:
       - name: Check out source
         uses: actions/checkout@v4
 
-      - name: Set up Android SDK
-        uses: android-actions/setup-android@v3
-
-      - name: Verify Android and Java environment
+      - name: Bootstrap Android SDK
         shell: cmd
         run: |
-          java -version
+          set "SDK_ROOT=%RUNNER_TEMP%\android-sdk"
+          set "ZIP=%RUNNER_TEMP%\android-cmdline-tools.zip"
+          set "EXTRACT=%RUNNER_TEMP%\android-cmdline-tools-extract"
+          if exist "%SDK_ROOT%" rmdir /s /q "%SDK_ROOT%"
+          if exist "%EXTRACT%" rmdir /s /q "%EXTRACT%"
+          if exist "%ZIP%" del /f /q "%ZIP%"
+          mkdir "%SDK_ROOT%"
+          mkdir "%EXTRACT%"
+          echo Downloading Android command-line tools...
+          curl.exe -L --fail --retry 3 --retry-delay 5 -o "%ZIP%" "https://dl.google.com/android/repository/commandlinetools-win-12266719_latest.zip"
           if errorlevel 1 exit /b 1
-          echo ANDROID_HOME=%ANDROID_HOME%
-          if not defined ANDROID_HOME (
-            echo ANDROID_HOME is not configured after Android SDK setup.
+          if not exist "%ZIP%" exit /b 1
+          powershell.exe -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command "Expand-Archive -LiteralPath '%ZIP%' -DestinationPath '%EXTRACT%' -Force"
+          if errorlevel 1 exit /b 1
+          if not exist "%EXTRACT%\cmdline-tools\bin\sdkmanager.bat" (
+            echo sdkmanager.bat was not found in downloaded command-line tools.
             exit /b 1
           )
-          if exist "%ANDROID_HOME%\cmdline-tools\latest\bin\sdkmanager.bat" (
-            set "SDKMANAGER=%ANDROID_HOME%\cmdline-tools\latest\bin\sdkmanager.bat"
-          ) else if exist "%ANDROID_HOME%\cmdline-tools\bin\sdkmanager.bat" (
-            set "SDKMANAGER=%ANDROID_HOME%\cmdline-tools\bin\sdkmanager.bat"
-          ) else (
-            echo sdkmanager.bat was not found under %ANDROID_HOME%.
-            exit /b 1
-          )
-          "%SDKMANAGER%" --version
+          mkdir "%SDK_ROOT%\cmdline-tools"
+          move "%EXTRACT%\cmdline-tools" "%SDK_ROOT%\cmdline-tools\latest"
           if errorlevel 1 exit /b 1
-          echo sdk.dir=%ANDROID_HOME%>local.properties
+          set "ANDROID_HOME=%SDK_ROOT%"
+          set "ANDROID_SDK_ROOT=%SDK_ROOT%"
+          >>"%GITHUB_ENV%" echo ANDROID_HOME=%SDK_ROOT%
+          >>"%GITHUB_ENV%" echo ANDROID_SDK_ROOT=%SDK_ROOT%
+          >>"%GITHUB_PATH%" echo %SDK_ROOT%\platform-tools
+          >>"%GITHUB_PATH%" echo %SDK_ROOT%\cmdline-tools\latest\bin
+          echo sdk.dir=%SDK_ROOT%>local.properties
+          "%SDK_ROOT%\cmdline-tools\latest\bin\sdkmanager.bat" --version
+          if errorlevel 1 exit /b 1
 
       - name: Install required Android components
         shell: cmd
         run: |
-          set "SDKMANAGER=%ANDROID_HOME%\cmdline-tools\latest\bin\sdkmanager.bat"
-          if not exist "%SDKMANAGER%" set "SDKMANAGER=%ANDROID_HOME%\cmdline-tools\bin\sdkmanager.bat"
-          "%SDKMANAGER%" "platform-tools" "platforms;android-36.1" "build-tools;36.0.0"
+          set "SDKMANAGER=%ANDROID_SDK_ROOT%\cmdline-tools\latest\bin\sdkmanager.bat"
+          "%SDKMANAGER%" --sdk_root="%ANDROID_SDK_ROOT%" --licenses
+          if errorlevel 1 exit /b 1
+          "%SDKMANAGER%" --sdk_root="%ANDROID_SDK_ROOT%" "platform-tools" "platforms;android-36.1" "build-tools;36.0.0"
           if errorlevel 1 exit /b 1
 
       - name: Run unit tests and assemble debug APK
