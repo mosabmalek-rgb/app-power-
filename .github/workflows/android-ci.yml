@@ -12,7 +12,7 @@ permissions:
 jobs:
   test-and-build:
     name: Test and build debug APK
-    runs-on: [self-hosted, Windows, X64]
+    runs-on: [self-hosted, Windows]
     steps:
       - name: Check out source
         uses: actions/checkout@v4
