@@ -35,7 +35,7 @@ class MainActivity : ComponentActivity() {
             val viewModel: FieldReadingViewModel = viewModel()
             
             val startDestination = when {
-              !viewModel.isLoggedIn.value -> "login"
+              !viewModel.isLoggedIn.value || !viewModel.isSubscriptionValidOffline() -> "login"
               viewModel.hasLocalPin() -> "pin_unlock"
               else -> "pin_setup"
             }
