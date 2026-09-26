@@ -33,6 +33,7 @@ class FieldReadingViewModel(application: Application) : AndroidViewModel(applica
     val savedUsername: StateFlow<String> = _savedUsername.asStateFlow()
 
     fun hasLocalPin(): Boolean = repository.hasLocalPin()
+    fun isSubscriptionValidOffline(): Boolean = repository.isSubscriptionValidOffline()
     fun setLocalPin(pin: String): Boolean = runCatching { repository.setLocalPin(pin); true }.getOrDefault(false)
     fun verifyLocalPin(pin: String): Boolean = repository.verifyLocalPin(pin)
 
