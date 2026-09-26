@@ -93,6 +93,7 @@ class FieldReadingRepository(
     fun getSubscriberFlow(id: String): Flow<SubscriberEntity?> = dao.getSubscriberByIdFlow(id)
 
     suspend fun saveReading(subscriberId: String, currentReading: Double, notes: String, latitude: Double, longitude: Double, photoPath: String?, isReadingReset: Boolean, fieldVerified: Boolean = true): Result<Unit> {
+        requireSubscriptionForOffline()
         val subscriber = dao.getSubscriberById(subscriberId) ?: return Result.failure(Exception("لم يتم العثور على بيانات هذا المشترك على الجهاز."))
         if (!isReadingReset && currentReading < subscriber.lastReading) return Result.failure(Exception("القراءة الحالية يجب أن تكون أكبر من أو تساوي القراءة السابقة."))
         val existing = dao.getReadingsForSubscriber(subscriberId)
@@ -123,6 +124,7 @@ class FieldReadingRepository(
     }
 
     suspend fun syncAllData(onProgress: (Int, String) -> Unit): Result<SyncSummary> {
+        requireSubscriptionForOffline()
         val outcome = runCatching {
             ensureActiveAccessToken()
             val branchId = activeBranchId()
