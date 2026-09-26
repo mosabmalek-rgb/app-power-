@@ -257,7 +257,7 @@ fun AddReadingScreen(
                             Toast.makeText(context, "راجع القراءة المستخلصة واضغط اعتماد القراءة أولاً.", Toast.LENGTH_SHORT).show()
                             return@Button
                         }
-                        viewModel.saveReading(subscriberId = sub.id, currentReading = readingVal, notes = notes, latitude = latitude ?: 0.0, longitude = longitude ?: 0.0, photoPath = capturedPhotoPath, isReadingReset = isReadingReset) { success, message ->
+                        viewModel.saveReading(subscriberId = sub.id, currentReading = readingVal, notes = notes, latitude = latitude ?: 0.0, longitude = longitude ?: 0.0, photoPath = capturedPhotoPath, isReadingReset = isReadingReset, fieldVerified = fieldVerified) { success, message ->
                             Toast.makeText(context, message, Toast.LENGTH_LONG).show()
                             if (success) onBack()
                         }
