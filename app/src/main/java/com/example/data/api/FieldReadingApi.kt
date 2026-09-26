@@ -66,7 +66,7 @@ interface FieldReadingApi {
     suspend fun getProfile(): MobileMeResponse
 
     @GET("api/mobile/v1/subscribers")
-    suspend fun getSubscribers(@Query("branchId") branchId: Long, @Query("limit") limit: Int = 100): MobileSubscribersResponse
+    suspend fun getSubscribers(@Query("branchId") branchId: Long, @Query("limit") limit: Int = 100, @Query("cursor") cursor: String? = null): MobileSubscribersResponse
 
     @POST("api/mobile/v1/readings")
     suspend fun createReading(@Body request: MobileReadingRequest): MobileReadingResponse
