@@ -132,8 +132,7 @@ class FieldReadingViewModel(application: Application) : AndroidViewModel(applica
     }
 
     fun logout() {
-        repository.clearSession()
-        _isLoggedIn.value = false
+        viewModelScope.launch { repository.logout(); _isLoggedIn.value = false }
     }
 
     fun saveReading(
@@ -144,6 +143,7 @@ class FieldReadingViewModel(application: Application) : AndroidViewModel(applica
         longitude: Double,
         photoPath: String?,
         isReadingReset: Boolean,
+        fieldVerified: Boolean = true,
         onResult: (Boolean, String) -> Unit
     ) {
         viewModelScope.launch {
@@ -154,7 +154,8 @@ class FieldReadingViewModel(application: Application) : AndroidViewModel(applica
                 latitude = latitude,
                 longitude = longitude,
                 photoPath = photoPath,
-                isReadingReset = isReadingReset
+                isReadingReset = isReadingReset,
+                fieldVerified = fieldVerified
             )
             if (result.isSuccess) {
                 FieldReadingSyncWorker.enqueue(getApplication())
