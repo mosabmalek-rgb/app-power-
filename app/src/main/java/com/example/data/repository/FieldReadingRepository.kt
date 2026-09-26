@@ -207,6 +207,8 @@ class FieldReadingRepository(
 
     private suspend fun logoutRemote() { runCatching { if (sessionStore.isLoggedIn()) { ensureActiveAccessToken(); api.logout() } } }
 
+    suspend fun logout() { logoutRemote(); clearSession() }
+
     private fun classifySyncFailure(error: Exception) = when (error) {
         is PermanentSyncException -> com.example.data.OfflineSyncIssue("needs_review", error.message ?: "تحتاج القراءة إلى مراجعة الفني.")
         is IOException -> OfflineSyncPolicy.forNetworkFailure()
