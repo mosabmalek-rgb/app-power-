@@ -176,7 +176,8 @@ fun AddReadingScreen(
                                 Text("التقاط صورة لإرفاقها كإثبات للقراءة", fontSize = 11.sp, color = MaterialTheme.colorScheme.outline)
                             }
                             Button(onClick = {
-                                val photoFile = File(context.cacheDir, "reading_${System.currentTimeMillis()}.jpg")
+                                val imageDir = File(context.filesDir, "meter_images").apply { mkdirs() }
+                                val photoFile = File(imageDir, "reading_${System.currentTimeMillis()}.jpg")
                                 val uri = FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", photoFile)
                                 pendingPhotoUri = uri
                                 pendingPhotoPath = photoFile.absolutePath
