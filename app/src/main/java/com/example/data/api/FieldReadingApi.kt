@@ -3,7 +3,7 @@ package com.example.data.api
 import retrofit2.http.*
 
 data class MobileLoginRequest(val email: String, val password: String, val tenantId: Long? = null, val deviceLabel: String? = null)
-data class MobileUser(val id: Long, val name: String?, val role: String, val tenantId: Long, val branchIds: List<Long>)
+data class MobileUser(val id: Long, val name: String?, val role: String, val tenantId: Long, val branchIds: List<Long>, val subscriptionEndsAt: String)
 data class MobileSessionResponse(val accessToken: String, val refreshToken: String, val expiresIn: Long, val user: MobileUser)
 data class MobileMeResponse(val user: MobileUser)
 data class MobileRefreshRequest(val refreshToken: String)
