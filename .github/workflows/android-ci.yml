@@ -18,42 +18,28 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Verify local Android build environment
-        shell: pwsh
+        shell: cmd
         run: |
+          where java
           java -version
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          if (-not $env:ANDROID_HOME -and -not $env:ANDROID_SDK_ROOT) {
-            Write-Error "ANDROID_HOME/ANDROID_SDK_ROOT is not configured on the self-hosted runner."
-            exit 1
-          }
-          $sdkRoot = if ($env:ANDROID_SDK_ROOT) { $env:ANDROID_SDK_ROOT } else { $env:ANDROID_HOME }
-          $sdkManager = Join-Path $sdkRoot "cmdline-tools\latest\bin\sdkmanager.bat"
-          if (-not (Test-Path $sdkManager)) {
-            $sdkManager = Join-Path $sdkRoot "tools\bin\sdkmanager.bat"
-          }
-          if (-not (Test-Path $sdkManager)) {
-            Write-Error "sdkmanager.bat was not found under $sdkRoot."
-            exit 1
-          }
-          & $sdkManager --version
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          if errorlevel 1 exit /b 1
+          where sdkmanager.bat
+          if errorlevel 1 exit /b 1
+          sdkmanager.bat --version
+          if errorlevel 1 exit /b 1
 
       - name: Install required Android components
-        shell: pwsh
+        shell: cmd
         run: |
-          $sdkRoot = if ($env:ANDROID_SDK_ROOT) { $env:ANDROID_SDK_ROOT } else { $env:ANDROID_HOME }
-          $sdkManager = Join-Path $sdkRoot "cmdline-tools\latest\bin\sdkmanager.bat"
-          if (-not (Test-Path $sdkManager)) {
-            $sdkManager = Join-Path $sdkRoot "tools\bin\sdkmanager.bat"
-          }
-          $yes = (1..100 | ForEach-Object { "y" }) -join "`n"
-          $yes | & $sdkManager --licenses
-          & $sdkManager "platform-tools" "platforms;android-36.1" "build-tools;36.0.0"
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          (for /L %%i in (1,1,100) do @echo y) | sdkmanager.bat --licenses
+          if errorlevel 1 exit /b 1
+          sdkmanager.bat "platform-tools" "platforms;android-36.1" "build-tools;36.0.0"
+          if errorlevel 1 exit /b 1
 
       - name: Run unit tests and assemble debug APK
-        shell: pwsh
-        run: .\gradlew.bat testDebugUnitTest assembleDebug --no-daemon --no-configuration-cache
+        shell: cmd
+        run: gradlew.bat testDebugUnitTest assembleDebug --no-daemon --no-configuration-cache
+        working-directory: .
 
       - name: Upload debug APK
         uses: actions/upload-artifact@v4
