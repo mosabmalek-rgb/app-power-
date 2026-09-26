@@ -46,6 +46,8 @@ class FieldReadingRepository(
     private val prefs = context.getSharedPreferences("field_reading_prefs", Context.MODE_PRIVATE)
 
     fun isLoggedIn(): Boolean = sessionStore.isLoggedIn()
+    fun isSubscriptionValidOffline(): Boolean = sessionStore.subscriptionAllowsOfflineNow()
+
     fun hasLocalPin(): Boolean = sessionStore.hasLocalPin()
     fun setLocalPin(pin: String) = sessionStore.setLocalPin(pin)
     fun verifyLocalPin(pin: String): Boolean = sessionStore.verifyLocalPin(pin)
