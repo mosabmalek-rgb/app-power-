@@ -3,6 +3,6 @@
     <item
         android:width="66dp"
         android:height="66dp"
-        android:drawable="@drawable/powerhub_logo_foreground_1787388603387"
+        android:drawable="@drawable/field_app_icon"
         android:gravity="center" />
 </layer-list>
