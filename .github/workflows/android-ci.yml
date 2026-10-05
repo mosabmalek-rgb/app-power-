@@ -13,6 +13,8 @@ env:
   # غيّر هذا المتغير عند تغيير دومين Production، أو عرّف متغير مستودع
   # باسم POWERHUB_API_BASE_URL ليتم استخدامه تلقائياً.
   POWERHUB_API_BASE_URL: ${{ vars.POWERHUB_API_BASE_URL || 'https://powerhub-platform.vercel.app/' }}
+  ANDROID_HOME: /usr/local/lib/android/sdk
+  ANDROID_SDK_ROOT: /usr/local/lib/android/sdk
 
 jobs:
   test-and-build:
@@ -29,13 +31,15 @@ jobs:
           java-version: "21"
           cache: gradle
 
-      - name: Set up Android SDK
-        uses: android-actions/setup-android@v3
-
-      - name: Install required Android components
+      - name: Prepare required Android SDK packages
+        shell: bash
         run: |
-          yes | sdkmanager --licenses
-          sdkmanager "platform-tools" "platforms;android-36.1" "build-tools;36.0.0"
+          set -euo pipefail
+          SDKMANAGER="$(find "$ANDROID_HOME/cmdline-tools" -type f -name sdkmanager -print -quit)"
+          test -x "$SDKMANAGER"
+          yes | "$SDKMANAGER" --sdk_root="$ANDROID_HOME" --licenses >/dev/null || true
+          yes | "$SDKMANAGER" --sdk_root="$ANDROID_HOME" \
+            "platform-tools" "platforms;android-36.1" "build-tools;36.0.0"
 
       - name: Set up Gradle cache
         uses: gradle/actions/setup-gradle@v4
