@@ -86,7 +86,7 @@ jobs:
 
       - name: Run unit tests and assemble debug APK
         shell: cmd
-        run: gradlew.bat testDebugUnitTest assembleDebug --no-daemon --no-configuration-cache
+        run: gradlew.bat testDebugUnitTest assembleDebug --no-daemon --no-configuration-cache -PPOWERHUB_API_BASE_URL=https://powerhub-platform.vercel.app/
 
       - name: Upload debug APK
         uses: actions/upload-artifact@v4
