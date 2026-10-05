@@ -31,15 +31,14 @@ jobs:
           java-version: "21"
           cache: gradle
 
-      - name: Prepare required Android SDK packages
+      - name: Verify preinstalled Android SDK packages
         shell: bash
         run: |
           set -euo pipefail
-          SDKMANAGER="$(find "$ANDROID_HOME/cmdline-tools" -type f -name sdkmanager -print -quit)"
-          test -x "$SDKMANAGER"
-          yes | "$SDKMANAGER" --sdk_root="$ANDROID_HOME" --licenses >/dev/null || true
-          yes | "$SDKMANAGER" --sdk_root="$ANDROID_HOME" \
-            "platform-tools" "platforms;android-36.1" "build-tools;36.0.0"
+          test -x "$(find "$ANDROID_HOME/cmdline-tools" -type f -name sdkmanager -print -quit)"
+          test -f "$ANDROID_HOME/platforms/android-36.1/android.jar"
+          test -x "$ANDROID_HOME/build-tools/36.0.0/aapt2"
+          test -x "$ANDROID_HOME/platform-tools/adb"
 
       - name: Set up Gradle cache
         uses: gradle/actions/setup-gradle@v4
