@@ -9,6 +9,7 @@ import com.example.data.OfflineSyncPolicy
 import com.example.data.PendingPaymentEntity
 import com.example.data.PendingReadingEntity
 import com.example.data.PendingSyncEventEntity
+import com.example.data.ReadingCycleType
 import com.example.data.SubscriberEntity
 import com.example.data.api.FieldReadingApi
 import com.example.data.api.MobileApiClient
@@ -26,6 +27,7 @@ import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 import java.util.TimeZone
+import java.util.Calendar
 
 data class SyncSummary(
     val synced: Int,
@@ -57,6 +59,12 @@ class FieldReadingRepository(
     fun getUserRole(): String = prefs.getString("user_role", "") ?: ""
     fun getCompanyName(): String = prefs.getString("company_name", "PowerHub") ?: "PowerHub"
     fun getSavedUsername(): String = prefs.getString("saved_username", "") ?: ""
+    fun getReadingCycleType(): ReadingCycleType = runCatching {
+        ReadingCycleType.valueOf(prefs.getString("reading_cycle_type", ReadingCycleType.WEEKLY.name) ?: ReadingCycleType.WEEKLY.name)
+    }.getOrDefault(ReadingCycleType.WEEKLY)
+    fun setReadingCycleType(type: ReadingCycleType) { prefs.edit().putString("reading_cycle_type", type.name).apply() }
+    fun getWeeklyCycleStartDay(): Int = prefs.getInt("weekly_cycle_start_day", Calendar.SATURDAY)
+    fun setWeeklyCycleStartDay(day: Int) { prefs.edit().putInt("weekly_cycle_start_day", day).apply() }
     private fun activeBranchId(): Long = prefs.getLong("active_branch_id", -1L)
 
     private suspend fun ensureActiveAccessToken() {
