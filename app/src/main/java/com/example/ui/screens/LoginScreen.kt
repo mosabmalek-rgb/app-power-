@@ -67,14 +67,16 @@ fun LoginScreen(
                 modifier = Modifier
                     .size(130.dp)
                     .clip(RoundedCornerShape(24.dp))
-                    .background(MaterialTheme.colorScheme.primaryContainer),
+                    .background(MaterialTheme.colorScheme.surfaceVariant),
                 contentAlignment = Alignment.Center
             ) {
                 Image(
-                    painter = painterResource(id = R.drawable.powerhub_logo_foreground_1787388603387),
+                    painter = painterResource(id = R.drawable.field_app_icon),
                     contentDescription = "شعار PowerHub",
-                    modifier = Modifier.fillMaxSize(),
-                    contentScale = ContentScale.Crop
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(8.dp),
+                    contentScale = ContentScale.Fit
                 )
             }
 

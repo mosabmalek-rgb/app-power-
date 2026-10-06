@@ -18,4 +18,9 @@ class ExampleRobolectricTest {
     val appName = context.getString(R.string.app_name)
     assertEquals("PowerHub", appName)
   }
+
+  @Test
+  fun `launch MainActivity without crash`() {
+    org.robolectric.Robolectric.buildActivity(MainActivity::class.java).setup()
+  }
 }
