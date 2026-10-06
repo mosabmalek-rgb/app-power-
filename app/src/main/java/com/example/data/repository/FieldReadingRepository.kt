@@ -12,6 +12,7 @@ import com.example.data.PendingSyncEventEntity
 import com.example.data.SubscriberEntity
 import com.example.data.api.FieldReadingApi
 import com.example.data.api.MobileApiClient
+import com.example.data.api.MobileChangePasswordRequest
 import com.example.data.api.MobileLoginRequest
 import com.example.data.api.MobileReadingRequest
 import com.example.data.api.MobileSessionStore
@@ -46,6 +47,7 @@ class FieldReadingRepository(
     private val prefs = context.getSharedPreferences("field_reading_prefs", Context.MODE_PRIVATE)
 
     fun isLoggedIn(): Boolean = sessionStore.isLoggedIn()
+    fun mustChangePassword(): Boolean = prefs.getBoolean("must_change_password", false)
     fun isSubscriptionValidOffline(): Boolean = sessionStore.subscriptionAllowsOfflineNow()
 
     fun hasLocalPin(): Boolean = sessionStore.hasLocalPin()
@@ -79,9 +81,16 @@ class FieldReadingRepository(
             putString("user_role", session.user.role)
             putString("company_name", "PowerHub")
             putLong("active_branch_id", session.user.branchIds.firstOrNull() ?: -1L)
+            putBoolean("must_change_password", session.user.mustChangePassword)
             if (remember) putString("saved_username", email.trim().lowercase()) else remove("saved_username")
             apply()
         }
+    }
+
+    suspend fun changeTemporaryPassword(newPassword: String): Result<Unit> = runCatching {
+        ensureActiveAccessToken()
+        api.changePassword(MobileChangePasswordRequest(newPassword))
+        prefs.edit().putBoolean("must_change_password", false).apply()
     }
 
     fun clearSession() {
