@@ -19,6 +19,8 @@ class FieldReadingViewModel(application: Application) : AndroidViewModel(applica
     // UI Session State
     private val _isLoggedIn = MutableStateFlow(repository.isLoggedIn())
     val isLoggedIn: StateFlow<Boolean> = _isLoggedIn.asStateFlow()
+    private val _mustChangePassword = MutableStateFlow(repository.mustChangePassword())
+    val mustChangePassword: StateFlow<Boolean> = _mustChangePassword.asStateFlow()
 
     private val _userName = MutableStateFlow(repository.getUserName())
     val userName: StateFlow<String> = _userName.asStateFlow()
@@ -123,7 +125,8 @@ class FieldReadingViewModel(application: Application) : AndroidViewModel(applica
                 _userRole.value = repository.getUserRole()
                 _companyName.value = repository.getCompanyName()
                 _savedUsername.value = repository.getSavedUsername()
-                repository.refreshSubscribers()
+                _mustChangePassword.value = repository.mustChangePassword()
+                if (!_mustChangePassword.value) repository.refreshSubscribers()
                 onResult(true)
             } else {
                 _loginError.value = result.exceptionOrNull()?.message ?: "تعذر تسجيل الدخول إلى PowerHub"
@@ -132,8 +135,18 @@ class FieldReadingViewModel(application: Application) : AndroidViewModel(applica
         }
     }
 
+    fun changeTemporaryPassword(newPassword: String, onResult: (Boolean, String?) -> Unit) {
+        viewModelScope.launch {
+            val result = repository.changeTemporaryPassword(newPassword)
+            if (result.isSuccess) {
+                _mustChangePassword.value = false
+                onResult(true, null)
+            } else onResult(false, result.exceptionOrNull()?.message ?: "تعذر تغيير كلمة المرور.")
+        }
+    }
+
     fun logout() {
-        viewModelScope.launch { repository.logout(); _isLoggedIn.value = false }
+        viewModelScope.launch { repository.logout(); _isLoggedIn.value = false; _mustChangePassword.value = false }
     }
 
     fun saveReading(

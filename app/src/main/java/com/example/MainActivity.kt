@@ -36,6 +36,7 @@ class MainActivity : ComponentActivity() {
             
             val startDestination = when {
               !viewModel.isLoggedIn.value || !viewModel.isSubscriptionValidOffline() -> "login"
+              viewModel.mustChangePassword.value -> "change_password"
               viewModel.hasLocalPin() -> "pin_unlock"
               else -> "pin_setup"
             }
@@ -46,9 +47,15 @@ class MainActivity : ComponentActivity() {
             ) {
               composable("login") {
                 LoginScreen(viewModel = viewModel) {
-                  navController.navigate("pin_setup") {
+                  navController.navigate(if (viewModel.mustChangePassword.value) "change_password" else "pin_setup") {
                     popUpTo("login") { inclusive = true }
                   }
+                }
+              }
+
+              composable("change_password") {
+                ChangePasswordScreen(viewModel = viewModel) {
+                  navController.navigate("pin_setup") { popUpTo("change_password") { inclusive = true } }
                 }
               }
 
