@@ -72,9 +72,29 @@ class FieldReadingRepository(
         }
     }
 
+    private fun extractErrorMessage(e: HttpException): String {
+        val body = runCatching { e.response()?.errorBody()?.string() }.getOrNull()
+        if (!body.isNullOrBlank()) {
+            val matched = Regex("\"message\"\\s*:\\s*\"([^\"]+)\"").find(body)?.groupValues?.get(1)
+            if (!matched.isNullOrBlank()) return matched
+        }
+        return when (e.code()) {
+            401 -> "بيانات الدخول غير صحيحة. يرجى التحقق من البريد وكلمة المرور."
+            403 -> "غير مصرح بالدخول (الحساب ليس لديه صلاحية محصل ميداني، أو اشتراك المنصة منتهي، أو الحساب غير مرتبط بفرع)."
+            404 -> "نقطة تسجيل الدخول غير متوفرة على الخادم."
+            else -> "حدث خطأ أثناء الاتصال بالخادم (${e.code()})."
+        }
+    }
+
     suspend fun login(email: String, password: String, remember: Boolean): Result<Unit> = runCatching {
         refreshApiBaseUrl()
-        val session = api.login(MobileLoginRequest(email = email.trim().lowercase(), password = password, deviceLabel = "Android Field Reader"))
+        val session = try {
+            api.login(MobileLoginRequest(email = email.trim().lowercase(), password = password, deviceLabel = "Android Field Reader"))
+        } catch (e: HttpException) {
+            throw Exception(extractErrorMessage(e))
+        } catch (e: IOException) {
+            throw Exception("تعذر الاتصال بالخادم. يرجى التحقق من اتصال الإنترنت.")
+        }
         sessionStore.save(session)
         prefs.edit().apply {
             putString("user_name", session.user.name ?: email.substringBefore("@"))
