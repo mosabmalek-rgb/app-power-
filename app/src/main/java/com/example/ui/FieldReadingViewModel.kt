@@ -56,6 +56,67 @@ class FieldReadingViewModel(application: Application) : AndroidViewModel(applica
     private val _searchQuery = MutableStateFlow("")
     val searchQuery: StateFlow<String> = _searchQuery.asStateFlow()
 
+    // Reading Cycle Configuration
+    private val _readingCycleType = MutableStateFlow<ReadingCycleType>(repository.getReadingCycleType())
+    val readingCycleType: StateFlow<ReadingCycleType> = _readingCycleType.asStateFlow()
+
+    private val _weeklyCycleStartDay = MutableStateFlow<Int>(repository.getWeeklyCycleStartDay())
+    val weeklyCycleStartDay: StateFlow<Int> = _weeklyCycleStartDay.asStateFlow()
+
+    val currentCycleRange: StateFlow<CycleDateRange> = combine(
+        _readingCycleType,
+        _weeklyCycleStartDay
+    ) { type: ReadingCycleType, day: Int ->
+        ReadingCycleCalculator.calculateCurrentCycleRange(type, day)
+    }.stateIn(
+        viewModelScope,
+        SharingStarted.Eagerly,
+        ReadingCycleCalculator.calculateCurrentCycleRange(_readingCycleType.value, _weeklyCycleStartDay.value)
+    )
+
+    // Subscriber Cycle Filter (All, Unread this cycle, Read this cycle)
+    private val _cycleFilter = MutableStateFlow(SubscriberCycleFilter.ALL)
+    val cycleFilter: StateFlow<SubscriberCycleFilter> = _cycleFilter.asStateFlow()
+
+    fun setCycleFilter(filter: SubscriberCycleFilter) {
+        _cycleFilter.value = filter
+    }
+
+    fun setReadingCycleType(type: ReadingCycleType) {
+        repository.setReadingCycleType(type)
+        _readingCycleType.value = type
+    }
+
+    fun setWeeklyCycleStartDay(day: Int) {
+        repository.setWeeklyCycleStartDay(day)
+        _weeklyCycleStartDay.value = day
+    }
+
+    // Unread & Read Subscribers in Current Cycle Counts
+    val unreadSubscribersCount: StateFlow<Int> = combine(
+        subscribers,
+        pendingReadings,
+        currentCycleRange
+    ) { subs, readings, cycle ->
+        subs.count { !ReadingCycleCalculator.isSubscriberReadInCycle(it, readings, cycle) }
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), 0)
+
+    val readSubscribersCount: StateFlow<Int> = combine(
+        subscribers,
+        pendingReadings,
+        currentCycleRange
+    ) { subs, readings, cycle ->
+        subs.count { ReadingCycleCalculator.isSubscriberReadInCycle(it, readings, cycle) }
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), 0)
+
+    fun isSubscriberReadInCurrentCycle(subscriber: SubscriberEntity): Boolean {
+        return ReadingCycleCalculator.isSubscriberReadInCycle(
+            subscriber,
+            pendingReadings.value,
+            currentCycleRange.value
+        )
+    }
+
     // Selected Subscriber for details screen
     private val _selectedSubscriberId = MutableStateFlow<String?>(null)
     val selectedSubscriber: StateFlow<SubscriberEntity?> = _selectedSubscriberId
@@ -64,20 +125,27 @@ class FieldReadingViewModel(application: Application) : AndroidViewModel(applica
         }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), null)
 
-    // Filtered Subscribers (Arabic Search & Branch Filter)
+    // Filtered Subscribers (Arabic Search & Cycle Filter)
     val filteredSubscribers: StateFlow<List<SubscriberEntity>> = combine(
         subscribers,
-        _searchQuery
-    ) { subs, query ->
-        if (query.isBlank()) {
-            subs
-        } else {
-            subs.filter {
-                it.name.contains(query, ignoreCase = true) ||
-                it.refNumber.contains(query, ignoreCase = true) ||
-                it.phone.contains(query, ignoreCase = true) ||
-                it.address.contains(query, ignoreCase = true)
+        _searchQuery,
+        _cycleFilter,
+        pendingReadings,
+        currentCycleRange
+    ) { subs, query, filter, readings, cycle ->
+        subs.filter { sub ->
+            val matchesQuery = if (query.isBlank()) true else {
+                sub.name.contains(query, ignoreCase = true) ||
+                sub.refNumber.contains(query, ignoreCase = true) ||
+                sub.phone.contains(query, ignoreCase = true) ||
+                sub.address.contains(query, ignoreCase = true)
             }
+            val matchesFilter = when (filter) {
+                SubscriberCycleFilter.ALL -> true
+                SubscriberCycleFilter.UNREAD_THIS_CYCLE -> !ReadingCycleCalculator.isSubscriberReadInCycle(sub, readings, cycle)
+                SubscriberCycleFilter.READ_THIS_CYCLE -> ReadingCycleCalculator.isSubscriberReadInCycle(sub, readings, cycle)
+            }
+            matchesQuery && matchesFilter
         }
     }
     .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())

@@ -88,7 +88,7 @@ fun RecordPaymentScreen(
                                 color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
                             )
                             Text(
-                                text = "الرصيد المستحق الحالي: ${sub.balance} ريال",
+                                text = "الرصيد المستحق الحالي: ${sub.balance} شيكل",
                                 fontSize = 12.sp,
                                 fontWeight = FontWeight.Bold,
                                 color = if (sub.balance > 0) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary
@@ -151,7 +151,7 @@ fun RecordPaymentScreen(
                                     amountStr = input
                                 }
                             },
-                            label = { Text("المبلغ المحصل (ريال سعودي)") },
+                            label = { Text("المبلغ المحصل (شيكل)") },
                             placeholder = { Text("أدخل قيمة المبلغ المسدد نقداً أو عبر البنك") },
                             leadingIcon = { Icon(Icons.Default.Payments, contentDescription = null) },
                             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),

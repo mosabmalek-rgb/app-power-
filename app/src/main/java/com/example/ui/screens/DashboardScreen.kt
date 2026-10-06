@@ -25,6 +25,12 @@ import androidx.compose.ui.unit.sp
 import com.example.ui.FieldReadingViewModel
 import com.example.data.PendingReadingEntity
 import com.example.data.PendingPaymentEntity
+import com.example.data.SubscriberCycleFilter
+
+enum class DashboardTab {
+    HOME,
+    CYCLE
+}
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -34,11 +40,17 @@ fun DashboardScreen(
     onNavigateToSync: () -> Unit,
     onNavigateToSettings: () -> Unit
 ) {
+    var currentTab by remember { mutableStateOf(DashboardTab.HOME) }
+    var cycleSubscribersFilter by remember { mutableStateOf(SubscriberCycleFilter.UNREAD_THIS_CYCLE) }
+
     val userName by viewModel.userName.collectAsState()
     val userRole by viewModel.userRole.collectAsState()
     val companyName by viewModel.companyName.collectAsState()
     val pendingReadings by viewModel.pendingReadings.collectAsState()
     val subscribers by viewModel.subscribers.collectAsState()
+    val unreadThisCycleCount by viewModel.unreadSubscribersCount.collectAsState()
+    val readThisCycleCount by viewModel.readSubscribersCount.collectAsState()
+    val currentCycleRange by viewModel.currentCycleRange.collectAsState()
 
     val pendingReadingsCount = pendingReadings.filter { it.status == "pending" }.size
     val totalPending = pendingReadingsCount
@@ -61,30 +73,74 @@ fun DashboardScreen(
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(vertical = 8.dp, horizontal = 16.dp),
+                        .padding(vertical = 8.dp, horizontal = 12.dp),
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    // Home (Active)
+                    // Home
                     Column(
                         horizontalAlignment = Alignment.CenterHorizontally,
                         modifier = Modifier
                             .weight(1f)
-                            .clickable { /* Already here */ }
+                            .clickable { currentTab = DashboardTab.HOME }
                             .padding(vertical = 4.dp)
                     ) {
                         Icon(
                             Icons.Default.Home,
                             contentDescription = "الرئيسية",
-                            tint = Color(0xFF004A77),
-                            modifier = Modifier.size(24.dp)
+                            tint = if (currentTab == DashboardTab.HOME) Color(0xFF004A77) else Color.Gray,
+                            modifier = Modifier.size(22.dp)
                         )
                         Text(
                             "الرئيسية",
                             fontSize = 10.sp,
-                            fontWeight = FontWeight.Bold,
-                            color = Color(0xFF004A77)
+                            fontWeight = if (currentTab == DashboardTab.HOME) FontWeight.Bold else FontWeight.Normal,
+                            color = if (currentTab == DashboardTab.HOME) Color(0xFF004A77) else Color.Gray
                         )
+                    }
+
+                    // Reading Cycle Tab (تبويب الدورة الحالية)
+                    Box(
+                        contentAlignment = Alignment.TopEnd,
+                        modifier = Modifier
+                            .weight(1f)
+                            .clickable { currentTab = DashboardTab.CYCLE }
+                            .padding(vertical = 4.dp)
+                    ) {
+                        Column(
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Icon(
+                                Icons.Default.CalendarMonth,
+                                contentDescription = "الدورة",
+                                tint = if (currentTab == DashboardTab.CYCLE) Color(0xFF004A77) else Color.Gray,
+                                modifier = Modifier.size(22.dp)
+                            )
+                            Text(
+                                "الدورة",
+                                fontSize = 10.sp,
+                                fontWeight = if (currentTab == DashboardTab.CYCLE) FontWeight.Bold else FontWeight.Normal,
+                                color = if (currentTab == DashboardTab.CYCLE) Color(0xFF004A77) else Color.Gray
+                            )
+                        }
+                        if (unreadThisCycleCount > 0) {
+                            Box(
+                                modifier = Modifier
+                                    .padding(end = 8.dp, top = 1.dp)
+                                    .size(16.dp)
+                                    .background(Color(0xFFEA580C), CircleShape)
+                                    .border(1.dp, Color.White, CircleShape),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Text(
+                                    text = if (unreadThisCycleCount > 99) "99+" else unreadThisCycleCount.toString(),
+                                    fontSize = 8.sp,
+                                    color = Color.White,
+                                    fontWeight = FontWeight.Bold
+                                )
+                            }
+                        }
                     }
 
                     // Subscribers
@@ -99,7 +155,7 @@ fun DashboardScreen(
                             Icons.Default.People,
                             contentDescription = "المشتركين",
                             tint = Color.Gray,
-                            modifier = Modifier.size(24.dp)
+                            modifier = Modifier.size(22.dp)
                         )
                         Text(
                             "المشتركين",
@@ -124,7 +180,7 @@ fun DashboardScreen(
                                 Icons.Default.Sync,
                                 contentDescription = "المزامنة",
                                 tint = Color.Gray,
-                                modifier = Modifier.size(24.dp)
+                                modifier = Modifier.size(22.dp)
                             )
                             Text(
                                 "المزامنة",
@@ -135,7 +191,7 @@ fun DashboardScreen(
                         if (totalPending > 0) {
                             Box(
                                 modifier = Modifier
-                                    .padding(end = 12.dp, top = 2.dp)
+                                    .padding(end = 8.dp, top = 1.dp)
                                     .size(16.dp)
                                     .background(Color(0xFFE28A00), CircleShape)
                                     .border(1.dp, Color.White, CircleShape),
@@ -143,7 +199,7 @@ fun DashboardScreen(
                             ) {
                                 Text(
                                     text = totalPending.toString(),
-                                    fontSize = 9.sp,
+                                    fontSize = 8.sp,
                                     color = Color.White,
                                     fontWeight = FontWeight.Bold
                                 )
@@ -163,7 +219,7 @@ fun DashboardScreen(
                             Icons.Default.Settings,
                             contentDescription = "الإعدادات",
                             tint = Color.Gray,
-                            modifier = Modifier.size(24.dp)
+                            modifier = Modifier.size(22.dp)
                         )
                         Text(
                             "الإعدادات",
@@ -266,58 +322,197 @@ fun DashboardScreen(
 
                     Spacer(modifier = Modifier.height(16.dp))
 
-                    // Grid in Header Banner
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(10.dp)
-                    ) {
-                        // Card 1
-                        Box(
-                            modifier = Modifier
-                                .weight(1f)
-                                .background(Color.White.copy(alpha = 0.1f), RoundedCornerShape(16.dp))
-                                .border(1.dp, Color.White.copy(alpha = 0.1f), RoundedCornerShape(16.dp))
-                                .padding(12.dp)
+                    // Grid in Header Banner (2x2 Clean Metrics Grid)
+                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
                         ) {
-                            Column {
-                                Text(
-                                    "قراءات اليوم",
-                                    fontSize = 10.sp,
-                                    color = Color.White.copy(alpha = 0.7f),
-                                    fontWeight = FontWeight.Bold
-                                )
-                                Spacer(modifier = Modifier.height(4.dp))
-                                Text(
-                                    readingsTodayCount.toString(),
-                                    fontSize = 24.sp,
-                                    color = Color.White,
-                                    fontWeight = FontWeight.Bold
-                                )
+                            // Total Existing Subscribers Card
+                            Box(
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .background(Color.White.copy(alpha = 0.12f), RoundedCornerShape(14.dp))
+                                    .border(1.dp, Color.White.copy(alpha = 0.15f), RoundedCornerShape(14.dp))
+                                    .clickable {
+                                        viewModel.setCycleFilter(SubscriberCycleFilter.ALL)
+                                        onNavigateToSubscribers()
+                                    }
+                                    .padding(horizontal = 12.dp, vertical = 10.dp)
+                            ) {
+                                Column {
+                                    Row(
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.SpaceBetween,
+                                        modifier = Modifier.fillMaxWidth()
+                                    ) {
+                                        Text(
+                                            "إجمالي المشتركين",
+                                            fontSize = 11.sp,
+                                            color = Color.White.copy(alpha = 0.8f),
+                                            fontWeight = FontWeight.Bold
+                                        )
+                                        Icon(
+                                            Icons.Default.People,
+                                            contentDescription = null,
+                                            tint = Color.White.copy(alpha = 0.8f),
+                                            modifier = Modifier.size(16.dp)
+                                        )
+                                    }
+                                    Spacer(modifier = Modifier.height(4.dp))
+                                    Text(
+                                        "${subscribers.size}",
+                                        fontSize = 22.sp,
+                                        color = Color.White,
+                                        fontWeight = FontWeight.Bold
+                                    )
+                                    Text(
+                                        "مشترك مسجل",
+                                        fontSize = 9.sp,
+                                        color = Color.White.copy(alpha = 0.6f)
+                                    )
+                                }
+                            }
+
+                            // Unread This Cycle Card (Attention Highlight)
+                            Box(
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .background(Color(0x33FF9800), RoundedCornerShape(14.dp))
+                                    .border(1.dp, Color(0x66FFB74D), RoundedCornerShape(14.dp))
+                                    .clickable {
+                                        viewModel.setCycleFilter(SubscriberCycleFilter.UNREAD_THIS_CYCLE)
+                                        onNavigateToSubscribers()
+                                    }
+                                    .padding(horizontal = 12.dp, vertical = 10.dp)
+                            ) {
+                                Column {
+                                    Row(
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.SpaceBetween,
+                                        modifier = Modifier.fillMaxWidth()
+                                    ) {
+                                        Text(
+                                            "لم تُسجل للدورة",
+                                            fontSize = 11.sp,
+                                            color = Color(0xFFFFCC80),
+                                            fontWeight = FontWeight.Bold
+                                        )
+                                        Icon(
+                                            Icons.Default.HourglassTop,
+                                            contentDescription = null,
+                                            tint = Color(0xFFFFB74D),
+                                            modifier = Modifier.size(16.dp)
+                                        )
+                                    }
+                                    Spacer(modifier = Modifier.height(4.dp))
+                                    Text(
+                                        "$unreadThisCycleCount",
+                                        fontSize = 22.sp,
+                                        color = Color(0xFFFFF3E0),
+                                        fontWeight = FontWeight.Bold
+                                    )
+                                    Text(
+                                        "اضغط لإظهارهم",
+                                        fontSize = 9.sp,
+                                        color = Color(0xFFFFE0B2),
+                                        fontWeight = FontWeight.Bold
+                                    )
+                                }
                             }
                         }
 
-                        // Card 2
-                        Box(
-                            modifier = Modifier
-                                .weight(1f)
-                                .background(Color(0x33FFB300), RoundedCornerShape(16.dp))
-                                .border(1.dp, Color(0x33FFB300), RoundedCornerShape(16.dp))
-                                .padding(12.dp)
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
                         ) {
-                            Column {
-                                Text(
-                                    "معلقة للمزامنة",
-                                    fontSize = 10.sp,
-                                    color = Color(0xFFFFD54F),
-                                    fontWeight = FontWeight.Bold
-                                )
-                                Spacer(modifier = Modifier.height(4.dp))
-                                Text(
-                                    totalPending.toString(),
-                                    fontSize = 24.sp,
-                                    color = Color(0xFFFFF9C4),
-                                    fontWeight = FontWeight.Bold
-                                )
+                            // Completed in this cycle
+                            Box(
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .background(Color(0x2E4CAF50), RoundedCornerShape(14.dp))
+                                    .border(1.dp, Color(0x5581C784), RoundedCornerShape(14.dp))
+                                    .clickable {
+                                        viewModel.setCycleFilter(SubscriberCycleFilter.READ_THIS_CYCLE)
+                                        onNavigateToSubscribers()
+                                    }
+                                    .padding(horizontal = 12.dp, vertical = 10.dp)
+                            ) {
+                                Column {
+                                    Row(
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.SpaceBetween,
+                                        modifier = Modifier.fillMaxWidth()
+                                    ) {
+                                        Text(
+                                            "تمت قراءتهم",
+                                            fontSize = 11.sp,
+                                            color = Color(0xFFA5D6A7),
+                                            fontWeight = FontWeight.Bold
+                                        )
+                                        Icon(
+                                            Icons.Default.CheckCircle,
+                                            contentDescription = null,
+                                            tint = Color(0xFF81C784),
+                                            modifier = Modifier.size(16.dp)
+                                        )
+                                    }
+                                    Spacer(modifier = Modifier.height(4.dp))
+                                    Text(
+                                        "$readThisCycleCount",
+                                        fontSize = 22.sp,
+                                        color = Color(0xFFE8F5E9),
+                                        fontWeight = FontWeight.Bold
+                                    )
+                                    Text(
+                                        "مكتملة للدورة",
+                                        fontSize = 9.sp,
+                                        color = Color(0xFFC8E6C9)
+                                    )
+                                }
+                            }
+
+                            // Pending sync
+                            Box(
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .background(Color.White.copy(alpha = 0.08f), RoundedCornerShape(14.dp))
+                                    .border(1.dp, Color.White.copy(alpha = 0.12f), RoundedCornerShape(14.dp))
+                                    .clickable { onNavigateToSync() }
+                                    .padding(horizontal = 12.dp, vertical = 10.dp)
+                            ) {
+                                Column {
+                                    Row(
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.SpaceBetween,
+                                        modifier = Modifier.fillMaxWidth()
+                                    ) {
+                                        Text(
+                                            "معلقة للمزامنة",
+                                            fontSize = 11.sp,
+                                            color = Color.White.copy(alpha = 0.75f),
+                                            fontWeight = FontWeight.Bold
+                                        )
+                                        Icon(
+                                            Icons.Default.Sync,
+                                            contentDescription = null,
+                                            tint = Color.White.copy(alpha = 0.75f),
+                                            modifier = Modifier.size(16.dp)
+                                        )
+                                    }
+                                    Spacer(modifier = Modifier.height(4.dp))
+                                    Text(
+                                        "$totalPending",
+                                        fontSize = 22.sp,
+                                        color = Color.White,
+                                        fontWeight = FontWeight.Bold
+                                    )
+                                    Text(
+                                        "محفوظة محلياً",
+                                        fontSize = 9.sp,
+                                        color = Color.White.copy(alpha = 0.55f)
+                                    )
+                                }
                             }
                         }
                     }
@@ -330,8 +525,118 @@ fun DashboardScreen(
                     .fillMaxWidth()
                     .padding(horizontal = 16.dp)
                     .offset(y = (-16).dp),
-                verticalArrangement = Arrangement.spacedBy(16.dp)
+                verticalArrangement = Arrangement.spacedBy(14.dp)
             ) {
+                // Reading Cycle Progress Card
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(16.dp),
+                    colors = CardDefaults.cardColors(containerColor = Color.White),
+                    elevation = CardDefaults.cardElevation(defaultElevation = 2.dp),
+                    border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFFE2E8F0))
+                ) {
+                    Column(modifier = Modifier.padding(16.dp)) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Box(
+                                    modifier = Modifier
+                                        .size(36.dp)
+                                        .background(Color(0xFFE0F2FE), CircleShape),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Icon(
+                                        Icons.Default.CalendarMonth,
+                                        contentDescription = null,
+                                        tint = Color(0xFF0284C7),
+                                        modifier = Modifier.size(20.dp)
+                                    )
+                                }
+                                Spacer(modifier = Modifier.width(10.dp))
+                                Column {
+                                    Text(
+                                        text = "الدورة الحالية للقراءات",
+                                        fontSize = 11.sp,
+                                        color = Color(0xFF64748B),
+                                        fontWeight = FontWeight.Medium
+                                    )
+                                    Text(
+                                        text = currentCycleRange.labelAr,
+                                        fontSize = 13.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        color = Color(0xFF0F172A)
+                                    )
+                                }
+                            }
+
+                            Surface(
+                                color = if (unreadThisCycleCount > 0) Color(0xFFFFFBEB) else Color(0xFFF0FDF4),
+                                shape = RoundedCornerShape(8.dp),
+                                border = androidx.compose.foundation.BorderStroke(1.dp, if (unreadThisCycleCount > 0) Color(0xFFFDE68A) else Color(0xFFBBF7D0))
+                            ) {
+                                Text(
+                                    text = if (unreadThisCycleCount > 0) "بانتظار $unreadThisCycleCount" else "مكتملة 100%",
+                                    fontSize = 10.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = if (unreadThisCycleCount > 0) Color(0xFFB45309) else Color(0xFF15803D),
+                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                                )
+                            }
+                        }
+
+                        Spacer(modifier = Modifier.height(14.dp))
+
+                        // Progress calculation
+                        val progress = if (subscribers.isNotEmpty()) {
+                            (readThisCycleCount.toFloat() / subscribers.size.toFloat()).coerceIn(0f, 1f)
+                        } else 0f
+
+                        LinearProgressIndicator(
+                            progress = { progress },
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(8.dp)
+                                .clip(RoundedCornerShape(4.dp)),
+                            color = Color(0xFF004A77),
+                            trackColor = Color(0xFFE2E8F0)
+                        )
+
+                        Spacer(modifier = Modifier.height(10.dp))
+
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                text = "تم تسجيل $readThisCycleCount من $subscribers.size مشترك (${(progress * 100).toInt()}%)",
+                                fontSize = 11.sp,
+                                color = Color(0xFF64748B),
+                                fontWeight = FontWeight.Medium
+                            )
+
+                            if (unreadThisCycleCount > 0) {
+                                TextButton(
+                                    onClick = {
+                                        viewModel.setCycleFilter(SubscriberCycleFilter.UNREAD_THIS_CYCLE)
+                                        onNavigateToSubscribers()
+                                    },
+                                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp)
+                                ) {
+                                    Text(
+                                        text = "إظهار المتبقين ($unreadThisCycleCount) ←",
+                                        fontSize = 11.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        color = Color(0xFF004A77)
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
                 // Interactive search bar card
                 Card(
                     modifier = Modifier
