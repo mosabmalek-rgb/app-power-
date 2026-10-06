@@ -5,7 +5,9 @@ import androidx.security.crypto.EncryptedSharedPreferences
 import androidx.security.crypto.MasterKey
 import com.example.BuildConfig
 import com.squareup.moshi.Json
+import com.squareup.moshi.JsonClass
 import com.squareup.moshi.Moshi
+import com.squareup.moshi.kotlin.reflect.KotlinJsonAdapterFactory
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import net.i2p.crypto.eddsa.EdDSASecurityProvider
@@ -20,6 +22,7 @@ import java.security.Signature
 import java.util.Base64
 import java.util.concurrent.TimeUnit
 
+@JsonClass(generateAdapter = true)
 data class RemoteApiConfig(
     @Json(name = "config_version") val configVersion: Int,
     @Json(name = "api_base_url") val apiBaseUrl: String,
@@ -58,14 +61,18 @@ object RemoteConfigSignature {
 }
 
 class RemoteConfigStore(context: Context) {
-    private val masterKey = MasterKey.Builder(context).setKeyScheme(MasterKey.KeyScheme.AES256_GCM).build()
-    private val prefs = EncryptedSharedPreferences.create(
-        context,
-        "powerhub_remote_config",
-        masterKey,
-        EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
-        EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM,
-    )
+    private val prefs: android.content.SharedPreferences = try {
+        val masterKey = MasterKey.Builder(context).setKeyScheme(MasterKey.KeyScheme.AES256_GCM).build()
+        EncryptedSharedPreferences.create(
+            context,
+            "powerhub_remote_config",
+            masterKey,
+            EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
+            EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM,
+        )
+    } catch (_: Throwable) {
+        context.getSharedPreferences("powerhub_remote_config_fallback", Context.MODE_PRIVATE)
+    }
 
     fun activeApiUrl(): String = prefs.getString("api_base_url", null)
         ?: RemoteConfigValidator.normalizeApiBaseUrl(BuildConfig.POWERHUB_API_BASE_URL)
@@ -86,7 +93,7 @@ class RemoteConfigStore(context: Context) {
 class RemoteConfigRepository(private val context: Context) {
     private val store = RemoteConfigStore(context)
     private val client = OkHttpClient.Builder().connectTimeout(10, TimeUnit.SECONDS).readTimeout(10, TimeUnit.SECONDS).build()
-    private val adapter = Moshi.Builder().build().adapter(RemoteApiConfig::class.java)
+    private val adapter = Moshi.Builder().add(KotlinJsonAdapterFactory()).build().adapter(RemoteApiConfig::class.java)
 
     fun activeApiUrl(): String = store.activeApiUrl()
 

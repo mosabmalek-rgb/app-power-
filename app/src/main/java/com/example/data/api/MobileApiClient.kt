@@ -14,14 +14,18 @@ import java.util.concurrent.TimeUnit
 import java.security.MessageDigest
 
 class MobileSessionStore(context: Context) {
-    private val masterKey = MasterKey.Builder(context).setKeyScheme(MasterKey.KeyScheme.AES256_GCM).build()
-    private val prefs = EncryptedSharedPreferences.create(
-        context,
-        "powerhub_mobile_session",
-        masterKey,
-        EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
-        EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM,
-    )
+    private val prefs: android.content.SharedPreferences = try {
+        val masterKey = MasterKey.Builder(context).setKeyScheme(MasterKey.KeyScheme.AES256_GCM).build()
+        EncryptedSharedPreferences.create(
+            context,
+            "powerhub_mobile_session",
+            masterKey,
+            EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
+            EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM,
+        )
+    } catch (_: Throwable) {
+        context.getSharedPreferences("powerhub_mobile_session_fallback", Context.MODE_PRIVATE)
+    }
 
     fun accessToken(): String? = prefs.getString("access_token", null)
     fun refreshToken(): String? = prefs.getString("refresh_token", null)

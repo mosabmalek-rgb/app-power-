@@ -9,84 +9,42 @@ on:
 permissions:
   contents: read
 
+env:
+  # غيّر هذا المتغير عند تغيير دومين Production، أو عرّف متغير مستودع
+  # باسم POWERHUB_API_BASE_URL ليتم استخدامه تلقائياً.
+  POWERHUB_API_BASE_URL: ${{ vars.POWERHUB_API_BASE_URL || 'https://powerhub-platform.vercel.app/' }}
+  ANDROID_HOME: /usr/local/lib/android/sdk
+  ANDROID_SDK_ROOT: /usr/local/lib/android/sdk
+
 jobs:
   test-and-build:
     name: Test and build debug APK
-    runs-on: [self-hosted, Windows]
+    runs-on: ubuntu-latest
     steps:
       - name: Check out source
         uses: actions/checkout@v4
 
-      - name: Bootstrap Android SDK
-        shell: cmd
-        run: |
-          set "SDK_ROOT=%RUNNER_TEMP%\android-sdk"
-          set "ZIP=%RUNNER_TEMP%\android-cmdline-tools.zip"
-          set "EXTRACT=%RUNNER_TEMP%\android-cmdline-tools-extract"
-          if exist "%SDK_ROOT%" rmdir /s /q "%SDK_ROOT%"
-          if exist "%EXTRACT%" rmdir /s /q "%EXTRACT%"
-          if exist "%ZIP%" del /f /q "%ZIP%"
-          mkdir "%SDK_ROOT%"
-          mkdir "%EXTRACT%"
-          curl.exe -L --fail --retry 3 --retry-delay 5 -o "%ZIP%" "https://dl.google.com/android/repository/commandlinetools-win-12266719_latest.zip"
-          if errorlevel 1 exit /b 1
-          powershell.exe -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command "Expand-Archive -LiteralPath '%ZIP%' -DestinationPath '%EXTRACT%' -Force"
-          if errorlevel 1 exit /b 1
-          if not exist "%EXTRACT%\cmdline-tools\bin\sdkmanager.bat" exit /b 1
-          mkdir "%SDK_ROOT%\cmdline-tools"
-          move "%EXTRACT%\cmdline-tools" "%SDK_ROOT%\cmdline-tools\latest"
-          if errorlevel 1 exit /b 1
-          >>"%GITHUB_ENV%" echo ANDROID_HOME=%SDK_ROOT%
-          >>"%GITHUB_ENV%" echo ANDROID_SDK_ROOT=%SDK_ROOT%
-          >>"%GITHUB_PATH%" echo %SDK_ROOT%\platform-tools
-          >>"%GITHUB_PATH%" echo %SDK_ROOT%\cmdline-tools\latest\bin
-          echo sdk.dir=%SDK_ROOT%>local.properties
-          "%SDK_ROOT%\cmdline-tools\latest\bin\sdkmanager.bat" --version
-          if errorlevel 1 exit /b 1
+      - name: Set up Java 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+          cache: gradle
 
-      - name: Verify Java and SDK manager
-        shell: cmd
+      - name: Verify preinstalled Android SDK packages
+        shell: bash
         run: |
-          where java
-          java -version
-          if errorlevel 1 exit /b 1
-          "%ANDROID_SDK_ROOT%\cmdline-tools\latest\bin\sdkmanager.bat" --version
-          if errorlevel 1 exit /b 1
+          set -euo pipefail
+          test -x "$(find "$ANDROID_HOME/cmdline-tools" -type f -name sdkmanager -print -quit)"
+          test -f "$ANDROID_HOME/platforms/android-36.1/android.jar"
+          test -x "$ANDROID_HOME/build-tools/36.0.0/aapt2"
+          test -x "$ANDROID_HOME/platform-tools/adb"
 
-      - name: Accept Android SDK licenses
-        shell: cmd
-        run: |
-          echo y|"%ANDROID_SDK_ROOT%\cmdline-tools\latest\bin\sdkmanager.bat" --sdk_root="%ANDROID_SDK_ROOT%" --licenses
-          if errorlevel 1 exit /b 1
-
-      - name: Install platform-tools
-        shell: cmd
-        run: |
-          "%ANDROID_SDK_ROOT%\cmdline-tools\latest\bin\sdkmanager.bat" --sdk_root="%ANDROID_SDK_ROOT%" "platform-tools"
-          if errorlevel 1 exit /b 1
-
-      - name: Install Android platform 36.1
-        shell: cmd
-        run: |
-          "%ANDROID_SDK_ROOT%\cmdline-tools\latest\bin\sdkmanager.bat" --sdk_root="%ANDROID_SDK_ROOT%" "platforms;android-36.1"
-          if errorlevel 1 exit /b 1
-
-      - name: Install Android build tools 36.0.0
-        shell: cmd
-        run: |
-          "%ANDROID_SDK_ROOT%\cmdline-tools\latest\bin\sdkmanager.bat" --sdk_root="%ANDROID_SDK_ROOT%" "build-tools;36.0.0"
-          if errorlevel 1 exit /b 1
-
-      - name: Verify Android SDK packages
-        shell: cmd
-        run: |
-          if not exist "%ANDROID_SDK_ROOT%\platform-tools\adb.exe" exit /b 1
-          if not exist "%ANDROID_SDK_ROOT%\platforms\android-36.1\android.jar" exit /b 1
-          if not exist "%ANDROID_SDK_ROOT%\build-tools\36.0.0\aapt2.exe" exit /b 1
+      - name: Set up Gradle cache
+        uses: gradle/actions/setup-gradle@v4
 
       - name: Run unit tests and assemble debug APK
-        shell: cmd
-        run: gradlew.bat testDebugUnitTest assembleDebug --no-daemon --no-configuration-cache
+        run: ./gradlew testDebugUnitTest assembleDebug --no-daemon --no-configuration-cache -PPOWERHUB_API_BASE_URL="$POWERHUB_API_BASE_URL"
 
       - name: Upload debug APK
         uses: actions/upload-artifact@v4
