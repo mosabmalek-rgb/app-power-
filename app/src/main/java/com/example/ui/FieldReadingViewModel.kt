@@ -62,16 +62,19 @@ class FieldReadingViewModel(application: Application) : AndroidViewModel(applica
 
     private val _weeklyCycleStartDay = MutableStateFlow<Int>(repository.getWeeklyCycleStartDay())
     val weeklyCycleStartDay: StateFlow<Int> = _weeklyCycleStartDay.asStateFlow()
+    private val _monthlyStartDay = MutableStateFlow<Int>(repository.getMonthlyStartDay())
+    val monthlyStartDay: StateFlow<Int> = _monthlyStartDay.asStateFlow()
 
     val currentCycleRange: StateFlow<CycleDateRange> = combine(
         _readingCycleType,
-        _weeklyCycleStartDay
-    ) { type: ReadingCycleType, day: Int ->
-        ReadingCycleCalculator.calculateCurrentCycleRange(type, day)
+        _weeklyCycleStartDay,
+        _monthlyStartDay
+    ) { type: ReadingCycleType, day: Int, monthDay: Int ->
+        ReadingCycleCalculator.calculateCurrentCycleRange(type, day, monthDay)
     }.stateIn(
         viewModelScope,
         SharingStarted.Eagerly,
-        ReadingCycleCalculator.calculateCurrentCycleRange(_readingCycleType.value, _weeklyCycleStartDay.value)
+        ReadingCycleCalculator.calculateCurrentCycleRange(_readingCycleType.value, _weeklyCycleStartDay.value, _monthlyStartDay.value)
     )
 
     // Subscriber Cycle Filter (All, Unread this cycle, Read this cycle)
@@ -90,6 +93,16 @@ class FieldReadingViewModel(application: Application) : AndroidViewModel(applica
     fun setWeeklyCycleStartDay(day: Int) {
         repository.setWeeklyCycleStartDay(day)
         _weeklyCycleStartDay.value = day
+    }
+
+    fun refreshReadingCycle() {
+        viewModelScope.launch {
+            repository.refreshReadingCycle().onSuccess { config ->
+                _readingCycleType.value = config.first
+                _weeklyCycleStartDay.value = config.second
+                _monthlyStartDay.value = config.third
+            }
+        }
     }
 
     // Unread & Read Subscribers in Current Cycle Counts
