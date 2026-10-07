@@ -38,6 +38,7 @@ import com.example.data.MeterReadingOcr
 import com.example.ui.FieldReadingViewModel
 import com.google.android.gms.location.LocationServices
 import java.io.File
+import kotlin.math.*
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -51,7 +52,6 @@ fun AddReadingScreen(
     var currentReadingStr by remember { mutableStateOf("") }
     var notes by remember { mutableStateOf("") }
     var isReadingReset by remember { mutableStateOf(false) }
-    var fieldVerified by remember { mutableStateOf(false) }
 
     var capturedPhotoPath by remember { mutableStateOf<String?>(null) }
     var pendingPhotoUri by remember { mutableStateOf<Uri?>(null) }
@@ -59,26 +59,72 @@ fun AddReadingScreen(
     var extractedReading by remember { mutableStateOf<String?>(null) }
     var ocrMessage by remember { mutableStateOf<String?>(null) }
     var readingApproved by remember { mutableStateOf(false) }
+
     var latitude by remember { mutableStateOf<Double?>(null) }
     var longitude by remember { mutableStateOf<Double?>(null) }
     var gpsReady by remember { mutableStateOf(false) }
+    var lastConfirmedLocation by remember { mutableStateOf<Pair<Double, Double>?>(null) }
+    var pendingLocation by remember { mutableStateOf<Pair<Double, Double>?>(null) }
+    var showLocationDialog by remember { mutableStateOf(false) }
+
     val fusedLocation = remember { LocationServices.getFusedLocationProviderClient(context) }
-    fun updateLocation() {
+
+    fun haversineMeters(lat1: Double, lon1: Double, lat2: Double, lon2: Double): Double {
+        val earthRadius = 6371000.0
+        val dLat = Math.toRadians(lat2 - lat1)
+        val dLon = Math.toRadians(lon2 - lon1)
+        val a = sin(dLat / 2) * sin(dLat / 2) +
+            cos(Math.toRadians(lat1)) * cos(Math.toRadians(lat2)) *
+            sin(dLon / 2) * sin(dLon / 2)
+        val c = 2 * atan2(sqrt(a), sqrt(1 - a))
+        return earthRadius * c
+    }
+
+    fun updateLocation(showAlertOnDistanceMismatch: Boolean = true) {
         if (ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_FINE_LOCATION) != PackageManager.PERMISSION_GRANTED) return
+
         fusedLocation.lastLocation.addOnSuccessListener { location ->
-            latitude = location?.latitude
-            longitude = location?.longitude
-            gpsReady = location != null
+            if (location == null) {
+                latitude = null
+                longitude = null
+                gpsReady = false
+                return@addOnSuccessListener
+            }
+
+            val newLocation = location.latitude to location.longitude
+
+            if (showAlertOnDistanceMismatch && lastConfirmedLocation != null) {
+                val distance = haversineMeters(
+                    lastConfirmedLocation!!.first,
+                    lastConfirmedLocation!!.second,
+                    location.latitude,
+                    location.longitude
+                )
+                if (distance > 5.0) {
+                    pendingLocation = newLocation
+                    showLocationDialog = true
+                    return@addOnSuccessListener
+                }
+            }
+
+            latitude = location.latitude
+            longitude = location.longitude
+            gpsReady = true
+            lastConfirmedLocation = newLocation
         }
     }
+
     val locationPermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
-        if (granted) updateLocation() else Toast.makeText(context, "تم حفظ القراءة بدون موقع لأن الإذن لم يُمنح.", Toast.LENGTH_SHORT).show()
+        if (granted) updateLocation(showAlertOnDistanceMismatch = true)
+        else Toast.makeText(context, "تم حفظ القراءة بدون موقع لأن الإذن لم يُمنح.", Toast.LENGTH_SHORT).show()
     }
+
     val takePicture = rememberLauncherForActivityResult(ActivityResultContracts.TakePicture()) { success ->
         capturedPhotoPath = if (success) pendingPhotoPath else null
         extractedReading = null
         ocrMessage = null
         readingApproved = false
+
         if (success && pendingPhotoUri != null) {
             MeterReadingOcr.extract(context, pendingPhotoUri!!) { value, message ->
                 extractedReading = value
@@ -86,11 +132,51 @@ fun AddReadingScreen(
                 if (value != null) currentReadingStr = value
             }
         }
+
         Toast.makeText(context, if (success) "تم التقاط صورة القراءة." else "لم يتم حفظ الصورة.", Toast.LENGTH_SHORT).show()
     }
+
     LaunchedEffect(Unit) {
-        if (ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED) updateLocation()
-        else locationPermission.launch(Manifest.permission.ACCESS_FINE_LOCATION)
+        if (ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED) {
+            updateLocation(showAlertOnDistanceMismatch = false)
+        } else {
+            locationPermission.launch(Manifest.permission.ACCESS_FINE_LOCATION)
+        }
+    }
+
+    if (showLocationDialog && pendingLocation != null) {
+        AlertDialog(
+            onDismissRequest = { showLocationDialog = false },
+            title = { Text("تنبيه موقع", fontWeight = FontWeight.Bold) },
+            text = {
+                val dist = if (lastConfirmedLocation != null) haversineMeters(lastConfirmedLocation!!.first, lastConfirmedLocation!!.second, pendingLocation!!.first, pendingLocation!!.second) else 0.0
+                Text("اختلفت إحداثيات الموقع الحالية عن الموقع الموثق سابقاً بمقدار ${String.format("%.2f", dist)} متر.\nهل تريد اعتماد الإحداثيات الجديدة؟")
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        latitude = pendingLocation!!.first
+                        longitude = pendingLocation!!.second
+                        gpsReady = true
+                        lastConfirmedLocation = pendingLocation
+                        pendingLocation = null
+                        showLocationDialog = false
+                    }
+                ) {
+                    Text("اعتماد الجديد", fontWeight = FontWeight.Bold)
+                }
+            },
+            dismissButton = {
+                TextButton(
+                    onClick = {
+                        pendingLocation = null
+                        showLocationDialog = false
+                    }
+                ) {
+                    Text("الاحتفاظ بالموقع الحالي")
+                }
+            }
+        )
     }
 
     Scaffold(
@@ -249,18 +335,11 @@ fun AddReadingScreen(
                             Spacer(modifier = Modifier.width(12.dp))
                             Column {
                                 Text("إحداثيات الموقع الميداني تلقائياً (GPS)", fontWeight = FontWeight.Bold, fontSize = 13.sp)
-                                if (gpsReady) Text(if (latitude != null && longitude != null) "خط عرض: ${String.format("%.5f", latitude)} | خط طول: ${String.format("%.5f", longitude)}" else "لم يتم تحديد الموقع", fontSize = 11.sp, color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Bold)
+                                if (gpsReady && latitude != null && longitude != null) Text("خط عرض: ${String.format("%.5f", latitude)} | خط طول: ${String.format("%.5f", longitude)}", fontSize = 11.sp, color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Bold)
                                 else Text("جاري استخلاص موقع القراءة الجغرافي...", fontSize = 11.sp, color = MaterialTheme.colorScheme.outline)
                             }
                         }
-                        HorizontalDivider()
-                        Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                            Checkbox(checked = fieldVerified, onCheckedChange = { fieldVerified = it }, modifier = Modifier.testTag("field_verified_checkbox"))
-                            Column {
-                                Text("تم التحقق ميدانياً وبصرياً من القراءة", fontWeight = FontWeight.Bold, fontSize = 13.sp)
-                                Text("يؤكد الفني صحة القراءة والصورة المرفقة", fontSize = 11.sp, color = MaterialTheme.colorScheme.outline)
-                            }
-                        }
+                        // تم حذف سطر التحقق الميداني غير الضروري
                     }
                 }
 
@@ -277,7 +356,7 @@ fun AddReadingScreen(
                             Toast.makeText(context, "راجع القراءة المستخلصة واضغط اعتماد القراءة أولاً.", Toast.LENGTH_SHORT).show()
                             return@Button
                         }
-                        viewModel.saveReading(subscriberId = sub.id, currentReading = readingVal, notes = notes, latitude = latitude ?: 0.0, longitude = longitude ?: 0.0, photoPath = capturedPhotoPath, isReadingReset = isReadingReset, fieldVerified = fieldVerified) { success, message ->
+                        viewModel.saveReading(subscriberId = sub.id, currentReading = readingVal, notes = notes, latitude = latitude ?: 0.0, longitude = longitude ?: 0.0, photoPath = capturedPhotoPath, isReadingReset = isReadingReset, fieldVerified = true) { success, message ->
                             Toast.makeText(context, message, Toast.LENGTH_LONG).show()
                             if (success) onBack()
                         }

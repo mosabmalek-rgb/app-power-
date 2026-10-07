@@ -1,7 +1,13 @@
 package com.example.ui.screens
 
+import android.graphics.BitmapFactory
+import android.net.Uri
 import android.widget.Toast
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.PickVisualMediaRequest
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
@@ -17,6 +23,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
@@ -40,6 +47,25 @@ fun SettingsScreen(
     val weeklyCycleStartDay by viewModel.weeklyCycleStartDay.collectAsState()
     val currentCycleRange by viewModel.currentCycleRange.collectAsState()
     val context = LocalContext.current
+
+    var profileImageUri by remember { mutableStateOf<Uri?>(null) }
+    val pickProfileImage = rememberLauncherForActivityResult(
+        ActivityResultContracts.PickVisualMedia()
+    ) { uri ->
+        if (uri != null) {
+            profileImageUri = uri
+        } else {
+            Toast.makeText(context, "لم يتم تحديد صورة.", Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    val profileBitmap = remember(profileImageUri) {
+        profileImageUri?.let { uri ->
+            context.contentResolver.openInputStream(uri)?.use { stream ->
+                BitmapFactory.decodeStream(stream)
+            }
+        }
+    }
 
     Scaffold(
         topBar = {
@@ -82,12 +108,22 @@ fun SettingsScreen(
                             .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.12f)),
                         contentAlignment = Alignment.Center
                     ) {
-                        Icon(
-                            Icons.Default.AccountCircle,
-                            contentDescription = null,
-                            tint = MaterialTheme.colorScheme.primary,
-                            modifier = Modifier.size(48.dp)
-                        )
+                        if (profileBitmap != null) {
+                            Image(
+                                bitmap = profileBitmap.asImageBitmap(),
+                                contentDescription = "صورة الملف",
+                                modifier = Modifier
+                                    .fillMaxSize()
+                                    .clip(CircleShape)
+                            )
+                        } else {
+                            Icon(
+                                Icons.Default.AccountCircle,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.size(48.dp)
+                            )
+                        }
                     }
 
                     Spacer(modifier = Modifier.height(12.dp))
@@ -97,13 +133,28 @@ fun SettingsScreen(
                         style = MaterialTheme.typography.titleLarge,
                         fontWeight = FontWeight.Bold
                     )
-                    
+
                     Text(
                         text = "الدور الميداني: $userRole",
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.primary,
                         modifier = Modifier.padding(top = 2.dp)
                     )
+
+                    Spacer(modifier = Modifier.height(12.dp))
+
+                    Button(
+                        onClick = {
+                            pickProfileImage.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
+                        },
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(12.dp),
+                        colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary)
+                    ) {
+                        Icon(Icons.Default.PhotoCamera, contentDescription = null)
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text("تغيير صورة الملف", fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                    }
 
                     Divider(modifier = Modifier.padding(vertical = 16.dp))
 
