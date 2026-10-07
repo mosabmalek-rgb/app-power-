@@ -31,6 +31,10 @@ fun SettingsScreen(
     val userName by viewModel.userName.collectAsState()
     val userRole by viewModel.userRole.collectAsState()
     val companyName by viewModel.companyName.collectAsState()
+    val readingCycleType by viewModel.readingCycleType.collectAsState()
+    val weeklyCycleStartDay by viewModel.weeklyCycleStartDay.collectAsState()
+    val monthlyStartDay by viewModel.monthlyStartDay.collectAsState()
+    val currentCycleRange by viewModel.currentCycleRange.collectAsState()
     val context = LocalContext.current
 
     Scaffold(
@@ -104,6 +108,40 @@ fun SettingsScreen(
                     DetailRow(label = "الأفرع المرخصة للعمل", value = "تُحدَّد تلقائياً من حساب PowerHub")
                     DetailRow(label = "بيانات الاتصال", value = "محفوظة بشكل محمي في الحساب")
                     DetailRow(label = "صلاحية التحصيل", value = "غير متاحة في تطبيق القراءات")
+                }
+            }
+
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(12.dp),
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
+            ) {
+                Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(Icons.Default.CalendarMonth, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text("دورة القراءات والفوترة", fontWeight = FontWeight.Bold, style = MaterialTheme.typography.titleSmall)
+                    }
+                    Text(
+                        when (readingCycleType) {
+                            com.example.data.ReadingCycleType.WEEKLY -> "أسبوعية — تبدأ يوم " + com.example.data.ReadingCycleCalculator.getDayNameAr(weeklyCycleStartDay)
+                            com.example.data.ReadingCycleType.EVERY_10_DAYS -> "كل 10 أيام — 1، 11، 21"
+                            com.example.data.ReadingCycleType.EVERY_15_DAYS -> "كل 15 يوم — 1، 16"
+                            com.example.data.ReadingCycleType.MONTHLY -> "شهرية — تبدأ يوم " + monthlyStartDay + "، وفبراير حسب آخر يوم متاح"
+                        },
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.primary
+                    )
+                    Text("الدورة الحالية: " + currentCycleRange.labelAr, fontSize = 12.sp)
+                    Text("الإعداد مركزي من PowerHub ويُحفظ على الجهاز لاستخدامه دون اتصال.", fontSize = 11.sp, color = MaterialTheme.colorScheme.outline)
+                    OutlinedButton(onClick = {
+                        viewModel.refreshReadingCycle()
+                        Toast.makeText(context, "جاري تحديث الدورة من PowerHub...", Toast.LENGTH_SHORT).show()
+                    }) {
+                        Icon(Icons.Default.Refresh, contentDescription = null)
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text("تحديث الدورة")
+                    }
                 }
             }
 
