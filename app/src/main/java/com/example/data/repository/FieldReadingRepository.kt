@@ -27,6 +27,7 @@ import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 import java.util.TimeZone
+import java.util.Calendar
 
 data class SyncSummary(
     val synced: Int,
@@ -58,6 +59,26 @@ class FieldReadingRepository(
     fun getUserRole(): String = prefs.getString("user_role", "") ?: ""
     fun getCompanyName(): String = prefs.getString("company_name", "PowerHub") ?: "PowerHub"
     fun getSavedUsername(): String = prefs.getString("saved_username", "") ?: ""
+    fun getReadingCycleType(): ReadingCycleType = runCatching {
+        ReadingCycleType.valueOf(prefs.getString("reading_cycle_type", ReadingCycleType.WEEKLY.name) ?: ReadingCycleType.WEEKLY.name)
+    }.getOrDefault(ReadingCycleType.WEEKLY)
+    fun setReadingCycleType(type: ReadingCycleType) { prefs.edit().putString("reading_cycle_type", type.name).apply() }
+    fun getWeeklyCycleStartDay(): Int = prefs.getInt("weekly_cycle_start_day", Calendar.SATURDAY)
+    fun setWeeklyCycleStartDay(day: Int) { prefs.edit().putInt("weekly_cycle_start_day", day).apply() }
+    fun getMonthlyStartDay(): Int = prefs.getInt("monthly_cycle_start_day", 1)
+    fun setMonthlyStartDay(day: Int) { prefs.edit().putInt("monthly_cycle_start_day", if (day == 30) 30 else 1).apply() }
+
+    suspend fun refreshReadingCycle(): Result<Triple<ReadingCycleType, Int, Int>> = runCatching {
+        ensureActiveAccessToken()
+        val branchId = activeBranchId()
+        if (branchId <= 0) throw IllegalStateException("لا يوجد فرع ميداني فعال لهذا الحساب.")
+        val remote = api.getReadingCycle(branchId).cycle
+        val type = ReadingCycleType.values().firstOrNull { it.code.equals(remote.cycleType, true) } ?: ReadingCycleType.MONTHLY
+        val weeklyDay = remote.weeklyStartDay.coerceIn(Calendar.SUNDAY, Calendar.SATURDAY)
+        val monthlyDay = if (remote.monthlyStartDay == 30) 30 else 1
+        prefs.edit().putString("reading_cycle_type", type.name).putInt("weekly_cycle_start_day", weeklyDay).putInt("monthly_cycle_start_day", monthlyDay).apply()
+        Triple(type, weeklyDay, monthlyDay)
+    }
     private fun activeBranchId(): Long = prefs.getLong("active_branch_id", -1L)
 
     fun getReadingCycleType(): ReadingCycleType {
