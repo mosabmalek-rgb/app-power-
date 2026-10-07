@@ -61,7 +61,7 @@ class ReadingCycleTest {
             referenceDate = february
         )
         assertTrue(range.labelAr.contains("تبدأ يوم 30"))
-        assertTrue(range.shortRangeText.contains("28 يناير"))
+        assertTrue(range.shortRangeText.contains("30 يناير"))
     }
 
     @Test
