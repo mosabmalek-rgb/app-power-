@@ -52,6 +52,19 @@ class ReadingCycleTest {
     }
 
     @Test
+    fun testMonthlyCycleDay30ClampsFebruaryTo28() {
+        val sdf = SimpleDateFormat("yyyy-MM-dd", Locale.US)
+        val february = sdf.parse("2026-02-20")!!
+        val range = ReadingCycleCalculator.calculateCurrentCycleRange(
+            ReadingCycleType.MONTHLY,
+            monthlyStartDay = 30,
+            referenceDate = february
+        )
+        assertTrue(range.labelAr.contains("تبدأ يوم 30"))
+        assertTrue(range.shortRangeText.contains("28 يناير"))
+    }
+
+    @Test
     fun testWeeklyCycle() {
         val sdf = SimpleDateFormat("yyyy-MM-dd", Locale.US)
         val saturday = sdf.parse("2026-10-03")!! // Saturday
