@@ -107,37 +107,8 @@ fun SubscriberDetailScreen(
                         DetailRow(label = "الرقم المرجعي", value = sub.refNumber)
                         DetailRow(label = "رقم جوال العميل", value = sub.phone)
                         DetailRow(label = "العنوان الوطني", value = sub.address)
-                        DetailRow(label = "رمز فرع التغطية", value = sub.branchId)
                         DetailRow(label = "آخر قراءة مقيدة", value = "${sub.lastReading} ك.و/س")
                         DetailRow(label = "تاريخ آخر قراءة", value = sub.lastReadingDate)
-
-                        val balanceColor = if (sub.balance > 0) {
-                            MaterialTheme.colorScheme.error
-                        } else if (sub.balance < 0) {
-                            MaterialTheme.colorScheme.primary
-                        } else {
-                            MaterialTheme.colorScheme.onSurface
-                        }
-
-                        HorizontalDivider(modifier = Modifier.padding(vertical = 12.dp))
-
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Text(
-                                text = "حالة رصيد الحساب المالي",
-                                fontWeight = FontWeight.Bold,
-                                style = MaterialTheme.typography.bodyMedium
-                            )
-                            Text(
-                                text = "${sub.balance} ريال",
-                                fontWeight = FontWeight.Bold,
-                                style = MaterialTheme.typography.titleMedium,
-                                color = balanceColor
-                            )
-                        }
                     }
                 }
 

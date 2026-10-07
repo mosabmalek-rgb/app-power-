@@ -9,6 +9,7 @@ import com.example.data.OfflineSyncPolicy
 import com.example.data.PendingPaymentEntity
 import com.example.data.PendingReadingEntity
 import com.example.data.PendingSyncEventEntity
+import com.example.data.ReadingCycleType
 import com.example.data.SubscriberEntity
 import com.example.data.api.FieldReadingApi
 import com.example.data.api.MobileApiClient
@@ -58,6 +59,27 @@ class FieldReadingRepository(
     fun getCompanyName(): String = prefs.getString("company_name", "PowerHub") ?: "PowerHub"
     fun getSavedUsername(): String = prefs.getString("saved_username", "") ?: ""
     private fun activeBranchId(): Long = prefs.getLong("active_branch_id", -1L)
+
+    fun getReadingCycleType(): ReadingCycleType {
+        val typeName = prefs.getString("reading_cycle_type", ReadingCycleType.MONTHLY.name) ?: ReadingCycleType.MONTHLY.name
+        return try {
+            ReadingCycleType.valueOf(typeName)
+        } catch (e: Exception) {
+            ReadingCycleType.MONTHLY
+        }
+    }
+
+    fun setReadingCycleType(type: ReadingCycleType) {
+        prefs.edit().putString("reading_cycle_type", type.name).apply()
+    }
+
+    fun getWeeklyCycleStartDay(): Int {
+        return prefs.getInt("reading_cycle_weekly_day", java.util.Calendar.SATURDAY)
+    }
+
+    fun setWeeklyCycleStartDay(day: Int) {
+        prefs.edit().putInt("reading_cycle_weekly_day", day).apply()
+    }
 
     private suspend fun ensureActiveAccessToken() {
         refreshApiBaseUrl()

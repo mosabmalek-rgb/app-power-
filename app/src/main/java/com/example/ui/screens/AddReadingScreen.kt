@@ -51,7 +51,7 @@ fun AddReadingScreen(
     var currentReadingStr by remember { mutableStateOf("") }
     var notes by remember { mutableStateOf("") }
     var isReadingReset by remember { mutableStateOf(false) }
-    var fieldVerified by remember { mutableStateOf(true) }
+    var fieldVerified by remember { mutableStateOf(false) }
 
     var capturedPhotoPath by remember { mutableStateOf<String?>(null) }
     var pendingPhotoUri by remember { mutableStateOf<Uri?>(null) }
@@ -149,8 +149,27 @@ fun AddReadingScreen(
                             value = currentReadingStr,
                             onValueChange = { input -> if (input.isEmpty() || input.all { it.isDigit() || it == '.' }) currentReadingStr = input },
                             label = { Text("القراءة الحالية للمشترك") },
-                            placeholder = { Text("أدخل قيمة القراءة الحالية") },
+                            placeholder = { Text("أدخل القيمة أو التقط صورة بالكاميرا") },
                             leadingIcon = { Icon(Icons.Default.Speed, contentDescription = null) },
+                            trailingIcon = {
+                                IconButton(
+                                    onClick = {
+                                        val imageDir = File(context.filesDir, "meter_images").apply { mkdirs() }
+                                        val photoFile = File(imageDir, "reading_${System.currentTimeMillis()}.jpg")
+                                        val uri = FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", photoFile)
+                                        pendingPhotoUri = uri
+                                        pendingPhotoPath = photoFile.absolutePath
+                                        takePicture.launch(uri)
+                                    },
+                                    modifier = Modifier.testTag("camera_inside_reading_input")
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.PhotoCamera,
+                                        contentDescription = "التقاط صورة للعداد واستخراج الرقم",
+                                        tint = MaterialTheme.colorScheme.primary
+                                    )
+                                }
+                            },
                             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                             modifier = Modifier.fillMaxWidth().testTag("current_reading_input"),
                             shape = RoundedCornerShape(10.dp), singleLine = true

@@ -1,9 +1,12 @@
 package com.example.ui.screens
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -25,7 +28,9 @@ import androidx.compose.ui.unit.sp
 import com.example.ui.FieldReadingViewModel
 import com.example.data.PendingReadingEntity
 import com.example.data.PendingPaymentEntity
+import com.example.data.ReadingCycleCalculator
 import com.example.data.SubscriberCycleFilter
+import com.example.data.SubscriberEntity
 
 enum class DashboardTab {
     HOME,
@@ -231,13 +236,22 @@ fun DashboardScreen(
             }
         }
     ) { innerPadding ->
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(bottom = innerPadding.calculateBottomPadding())
-                .background(Color(0xFFF7F9FC))
-                .verticalScroll(rememberScrollState())
-        ) {
+        if (currentTab == DashboardTab.CYCLE) {
+            BackHandler { currentTab = DashboardTab.HOME }
+            ReadingCycleTabContent(
+                innerPadding = innerPadding,
+                viewModel = viewModel,
+                onNavigateToSubscribers = onNavigateToSubscribers,
+                onNavigateToSettings = onNavigateToSettings
+            )
+        } else {
+            Column(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(bottom = innerPadding.calculateBottomPadding())
+                    .background(Color(0xFFF7F9FC))
+                    .verticalScroll(rememberScrollState())
+            ) {
             // High Density Header Banner
             Box(
                 modifier = Modifier
@@ -527,113 +541,83 @@ fun DashboardScreen(
                     .offset(y = (-16).dp),
                 verticalArrangement = Arrangement.spacedBy(14.dp)
             ) {
-                // Reading Cycle Progress Card
+                // Summary link to the Reading Cycle Tab
                 Card(
-                    modifier = Modifier.fillMaxWidth(),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable { currentTab = DashboardTab.CYCLE },
                     shape = RoundedCornerShape(16.dp),
                     colors = CardDefaults.cardColors(containerColor = Color.White),
                     elevation = CardDefaults.cardElevation(defaultElevation = 2.dp),
                     border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFFE2E8F0))
                 ) {
-                    Column(modifier = Modifier.padding(16.dp)) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(14.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
                         Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier.weight(1f)
                         ) {
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                Box(
-                                    modifier = Modifier
-                                        .size(36.dp)
-                                        .background(Color(0xFFE0F2FE), CircleShape),
-                                    contentAlignment = Alignment.Center
-                                ) {
-                                    Icon(
-                                        Icons.Default.CalendarMonth,
-                                        contentDescription = null,
-                                        tint = Color(0xFF0284C7),
-                                        modifier = Modifier.size(20.dp)
-                                    )
-                                }
-                                Spacer(modifier = Modifier.width(10.dp))
-                                Column {
+                            Box(
+                                modifier = Modifier
+                                    .size(40.dp)
+                                    .background(Color(0xFFE0F2FE), CircleShape),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Icon(
+                                    Icons.Default.CalendarMonth,
+                                    contentDescription = null,
+                                    tint = Color(0xFF0284C7),
+                                    modifier = Modifier.size(22.dp)
+                                )
+                            }
+                            Spacer(modifier = Modifier.width(12.dp))
+                            Column {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
                                     Text(
                                         text = "الدورة الحالية للقراءات",
-                                        fontSize = 11.sp,
-                                        color = Color(0xFF64748B),
-                                        fontWeight = FontWeight.Medium
-                                    )
-                                    Text(
-                                        text = currentCycleRange.labelAr,
                                         fontSize = 13.sp,
                                         fontWeight = FontWeight.Bold,
                                         color = Color(0xFF0F172A)
                                     )
+                                    Spacer(modifier = Modifier.width(6.dp))
+                                    Surface(
+                                        color = if (unreadThisCycleCount > 0) Color(0xFFFFFBEB) else Color(0xFFF0FDF4),
+                                        shape = RoundedCornerShape(6.dp),
+                                        border = androidx.compose.foundation.BorderStroke(1.dp, if (unreadThisCycleCount > 0) Color(0xFFFDE68A) else Color(0xFFBBF7D0))
+                                    ) {
+                                        Text(
+                                            text = if (unreadThisCycleCount > 0) "بانتظار $unreadThisCycleCount" else "مكتملة",
+                                            fontSize = 9.sp,
+                                            fontWeight = FontWeight.Bold,
+                                            color = if (unreadThisCycleCount > 0) Color(0xFFB45309) else Color(0xFF15803D),
+                                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                                        )
+                                    }
                                 }
-                            }
-
-                            Surface(
-                                color = if (unreadThisCycleCount > 0) Color(0xFFFFFBEB) else Color(0xFFF0FDF4),
-                                shape = RoundedCornerShape(8.dp),
-                                border = androidx.compose.foundation.BorderStroke(1.dp, if (unreadThisCycleCount > 0) Color(0xFFFDE68A) else Color(0xFFBBF7D0))
-                            ) {
                                 Text(
-                                    text = if (unreadThisCycleCount > 0) "بانتظار $unreadThisCycleCount" else "مكتملة 100%",
-                                    fontSize = 10.sp,
-                                    fontWeight = FontWeight.Bold,
-                                    color = if (unreadThisCycleCount > 0) Color(0xFFB45309) else Color(0xFF15803D),
-                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                                    text = currentCycleRange.labelAr,
+                                    fontSize = 11.sp,
+                                    color = Color(0xFF64748B)
                                 )
                             }
                         }
 
-                        Spacer(modifier = Modifier.height(14.dp))
-
-                        // Progress calculation
-                        val progress = if (subscribers.isNotEmpty()) {
-                            (readThisCycleCount.toFloat() / subscribers.size.toFloat()).coerceIn(0f, 1f)
-                        } else 0f
-
-                        LinearProgressIndicator(
-                            progress = { progress },
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .height(8.dp)
-                                .clip(RoundedCornerShape(4.dp)),
-                            color = Color(0xFF004A77),
-                            trackColor = Color(0xFFE2E8F0)
-                        )
-
-                        Spacer(modifier = Modifier.height(10.dp))
-
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
+                        Surface(
+                            color = Color(0xFFF0F9FF),
+                            shape = RoundedCornerShape(8.dp)
                         ) {
                             Text(
-                                text = "تم تسجيل $readThisCycleCount من $subscribers.size مشترك (${(progress * 100).toInt()}%)",
+                                text = "عرض التبويب ←",
                                 fontSize = 11.sp,
-                                color = Color(0xFF64748B),
-                                fontWeight = FontWeight.Medium
+                                fontWeight = FontWeight.Bold,
+                                color = Color(0xFF004A77),
+                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
                             )
-
-                            if (unreadThisCycleCount > 0) {
-                                TextButton(
-                                    onClick = {
-                                        viewModel.setCycleFilter(SubscriberCycleFilter.UNREAD_THIS_CYCLE)
-                                        onNavigateToSubscribers()
-                                    },
-                                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp)
-                                ) {
-                                    Text(
-                                        text = "إظهار المتبقين ($unreadThisCycleCount) ←",
-                                        fontSize = 11.sp,
-                                        fontWeight = FontWeight.Bold,
-                                        color = Color(0xFF004A77)
-                                    )
-                                }
-                            }
                         }
                     }
                 }
@@ -823,6 +807,376 @@ fun DashboardScreen(
                 }
                 
                 Spacer(modifier = Modifier.height(16.dp))
+            }
+        }
+    }
+}
+}
+
+@Composable
+fun ReadingCycleTabContent(
+    innerPadding: PaddingValues,
+    viewModel: FieldReadingViewModel,
+    onNavigateToSubscribers: () -> Unit,
+    onNavigateToSettings: () -> Unit
+) {
+    val subscribers by viewModel.subscribers.collectAsState()
+    val pendingReadings by viewModel.pendingReadings.collectAsState()
+    val unreadThisCycleCount by viewModel.unreadSubscribersCount.collectAsState()
+    val readThisCycleCount by viewModel.readSubscribersCount.collectAsState()
+    val currentCycleRange by viewModel.currentCycleRange.collectAsState()
+
+    var selectedFilter by remember { mutableStateOf(SubscriberCycleFilter.UNREAD_THIS_CYCLE) }
+    var searchQuery by remember { mutableStateOf("") }
+
+    val filteredList = remember(subscribers, pendingReadings, currentCycleRange, selectedFilter, searchQuery) {
+        subscribers.filter { sub ->
+            val matchesFilter = when (selectedFilter) {
+                SubscriberCycleFilter.ALL -> true
+                SubscriberCycleFilter.UNREAD_THIS_CYCLE -> !ReadingCycleCalculator.isSubscriberReadInCycle(sub, pendingReadings, currentCycleRange)
+                SubscriberCycleFilter.READ_THIS_CYCLE -> ReadingCycleCalculator.isSubscriberReadInCycle(sub, pendingReadings, currentCycleRange)
+            }
+            val matchesQuery = if (searchQuery.isBlank()) true else {
+                sub.name.contains(searchQuery, ignoreCase = true) ||
+                sub.refNumber.contains(searchQuery, ignoreCase = true) ||
+                sub.phone.contains(searchQuery, ignoreCase = true)
+            }
+            matchesFilter && matchesQuery
+        }
+    }
+
+    val progress = if (subscribers.isNotEmpty()) {
+        (readThisCycleCount.toFloat() / subscribers.size.toFloat()).coerceIn(0f, 1f)
+    } else 0f
+
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(bottom = innerPadding.calculateBottomPadding())
+            .background(Color(0xFFF7F9FC))
+    ) {
+        // Top Header
+        Surface(
+            modifier = Modifier.fillMaxWidth(),
+            color = Color(0xFF004A77),
+            shape = RoundedCornerShape(bottomStart = 20.dp, bottomEnd = 20.dp)
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp, vertical = 18.dp)
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(42.dp)
+                                .background(Color.White.copy(alpha = 0.15f), CircleShape),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(
+                                Icons.Default.CalendarMonth,
+                                contentDescription = null,
+                                tint = Color.White,
+                                modifier = Modifier.size(24.dp)
+                            )
+                        }
+                        Spacer(modifier = Modifier.width(12.dp))
+                        Column {
+                            Text(
+                                text = "بطاقة الدورة الحالية للقراءات",
+                                color = Color.White,
+                                fontSize = 16.sp,
+                                fontWeight = FontWeight.Bold
+                            )
+                            Text(
+                                text = currentCycleRange.labelAr,
+                                color = Color.White.copy(alpha = 0.85f),
+                                fontSize = 12.sp
+                            )
+                        }
+                    }
+
+                    // Settings Button
+                    IconButton(
+                        onClick = onNavigateToSettings,
+                        modifier = Modifier.background(Color.White.copy(alpha = 0.15f), CircleShape)
+                    ) {
+                        Icon(
+                            Icons.Default.Tune,
+                            contentDescription = "ضبط دورة القراءات",
+                            tint = Color.White,
+                            modifier = Modifier.size(20.dp)
+                        )
+                    }
+                }
+            }
+        }
+
+        LazyColumn(
+            modifier = Modifier.fillMaxSize(),
+            contentPadding = PaddingValues(16.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            // Main Cycle Card
+            item {
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(16.dp),
+                    colors = CardDefaults.cardColors(containerColor = Color.White),
+                    elevation = CardDefaults.cardElevation(defaultElevation = 2.dp),
+                    border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFFE2E8F0))
+                ) {
+                    Column(modifier = Modifier.padding(16.dp)) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Column {
+                                Text(
+                                    text = "حالة إنجاز الدورة الحالية",
+                                    fontSize = 14.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = Color(0xFF0F172A)
+                                )
+                                Text(
+                                    text = "النطاق: ${currentCycleRange.shortRangeText}",
+                                    fontSize = 11.sp,
+                                    color = Color(0xFF64748B)
+                                )
+                            }
+                            Surface(
+                                color = if (unreadThisCycleCount == 0) Color(0xFFF0FDF4) else Color(0xFFFFFBEB),
+                                shape = RoundedCornerShape(8.dp),
+                                border = androidx.compose.foundation.BorderStroke(1.dp, if (unreadThisCycleCount == 0) Color(0xFFBBF7D0) else Color(0xFFFDE68A))
+                            ) {
+                                Text(
+                                    text = "${(progress * 100).toInt()}% منجز",
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = if (unreadThisCycleCount == 0) Color(0xFF15803D) else Color(0xFFB45309),
+                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                                )
+                            }
+                        }
+
+                        Spacer(modifier = Modifier.height(12.dp))
+
+                        LinearProgressIndicator(
+                            progress = { progress },
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(10.dp)
+                                .clip(RoundedCornerShape(5.dp)),
+                            color = Color(0xFF004A77),
+                            trackColor = Color(0xFFE2E8F0)
+                        )
+
+                        Spacer(modifier = Modifier.height(16.dp))
+
+                        // 3 Statistics Cards
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            // Total
+                            Surface(
+                                modifier = Modifier.weight(1f),
+                                shape = RoundedCornerShape(10.dp),
+                                color = Color(0xFFF8FAFC),
+                                border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFFE2E8F0))
+                            ) {
+                                Column(
+                                    modifier = Modifier.padding(8.dp),
+                                    horizontalAlignment = Alignment.CenterHorizontally
+                                ) {
+                                    Text("الإجمالي", fontSize = 10.sp, color = Color(0xFF64748B))
+                                    Text("${subscribers.size}", fontSize = 16.sp, fontWeight = FontWeight.Bold, color = Color(0xFF0F172A))
+                                }
+                            }
+
+                            // Read
+                            Surface(
+                                modifier = Modifier.weight(1f),
+                                shape = RoundedCornerShape(10.dp),
+                                color = Color(0xFFF0FDF4),
+                                border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFFBBF7D0))
+                            ) {
+                                Column(
+                                    modifier = Modifier.padding(8.dp),
+                                    horizontalAlignment = Alignment.CenterHorizontally
+                                ) {
+                                    Text("تمت القراءة", fontSize = 10.sp, color = Color(0xFF15803D))
+                                    Text("$readThisCycleCount", fontSize = 16.sp, fontWeight = FontWeight.Bold, color = Color(0xFF15803D))
+                                }
+                            }
+
+                            // Unread
+                            Surface(
+                                modifier = Modifier.weight(1f),
+                                shape = RoundedCornerShape(10.dp),
+                                color = Color(0xFFFFFBEB),
+                                border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFFFDE68A))
+                            ) {
+                                Column(
+                                    modifier = Modifier.padding(8.dp),
+                                    horizontalAlignment = Alignment.CenterHorizontally
+                                ) {
+                                    Text("بانتظار القراءة", fontSize = 10.sp, color = Color(0xFFB45309))
+                                    Text("$unreadThisCycleCount", fontSize = 16.sp, fontWeight = FontWeight.Bold, color = Color(0xFFB45309))
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Search Bar inside Cycle Tab
+            item {
+                OutlinedTextField(
+                    value = searchQuery,
+                    onValueChange = { searchQuery = it },
+                    placeholder = { Text("بحث في مشتركي الدورة...", fontSize = 12.sp) },
+                    leadingIcon = { Icon(Icons.Default.Search, contentDescription = null, tint = Color.Gray, modifier = Modifier.size(20.dp)) },
+                    trailingIcon = {
+                        if (searchQuery.isNotEmpty()) {
+                            IconButton(onClick = { searchQuery = "" }) {
+                                Icon(Icons.Default.Close, contentDescription = "مسح", modifier = Modifier.size(18.dp))
+                            }
+                        }
+                    },
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(12.dp),
+                    colors = OutlinedTextFieldDefaults.colors(
+                        focusedContainerColor = Color.White,
+                        unfocusedContainerColor = Color.White,
+                        focusedBorderColor = Color(0xFF004A77)
+                    ),
+                    singleLine = true
+                )
+            }
+
+            // Filter Chips Row
+            item {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    FilterChip(
+                        selected = selectedFilter == SubscriberCycleFilter.UNREAD_THIS_CYCLE,
+                        onClick = { selectedFilter = SubscriberCycleFilter.UNREAD_THIS_CYCLE },
+                        label = { Text("المتبقين ($unreadThisCycleCount)", fontSize = 11.sp, fontWeight = FontWeight.Bold) },
+                        modifier = Modifier.weight(1f)
+                    )
+                    FilterChip(
+                        selected = selectedFilter == SubscriberCycleFilter.READ_THIS_CYCLE,
+                        onClick = { selectedFilter = SubscriberCycleFilter.READ_THIS_CYCLE },
+                        label = { Text("تمت قراءتهم ($readThisCycleCount)", fontSize = 11.sp, fontWeight = FontWeight.Bold) },
+                        modifier = Modifier.weight(1f)
+                    )
+                    FilterChip(
+                        selected = selectedFilter == SubscriberCycleFilter.ALL,
+                        onClick = { selectedFilter = SubscriberCycleFilter.ALL },
+                        label = { Text("الكل (${subscribers.size})", fontSize = 11.sp, fontWeight = FontWeight.Bold) },
+                        modifier = Modifier.weight(1f)
+                    )
+                }
+            }
+
+            // Subscribers List Items
+            if (filteredList.isEmpty()) {
+                item {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(vertical = 32.dp),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                            Icon(
+                                Icons.Default.CheckCircle,
+                                contentDescription = null,
+                                tint = Color(0xFF10B981),
+                                modifier = Modifier.size(48.dp)
+                            )
+                            Spacer(modifier = Modifier.height(8.dp))
+                            Text(
+                                text = if (selectedFilter == SubscriberCycleFilter.UNREAD_THIS_CYCLE) "لا يوجد مشتركون بانتظار القراءة في هذه الدورة! 🎉" else "لا توجد نتائج مطابقة.",
+                                fontWeight = FontWeight.Bold,
+                                color = Color(0xFF64748B),
+                                fontSize = 13.sp
+                            )
+                        }
+                    }
+                }
+            } else {
+                items(filteredList, key = { it.id }) { subscriber ->
+                    val isRead = ReadingCycleCalculator.isSubscriberReadInCycle(subscriber, pendingReadings, currentCycleRange)
+                    Card(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable {
+                                viewModel.selectSubscriber(subscriber.id)
+                                onNavigateToSubscribers()
+                            },
+                        shape = RoundedCornerShape(12.dp),
+                        colors = CardDefaults.cardColors(containerColor = Color.White),
+                        elevation = CardDefaults.cardElevation(defaultElevation = 1.dp),
+                        border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFFE2E8F0))
+                    ) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(12.dp),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = subscriber.name,
+                                    fontWeight = FontWeight.Bold,
+                                    fontSize = 13.sp,
+                                    color = Color(0xFF0F172A)
+                                )
+                                Spacer(modifier = Modifier.height(2.dp))
+                                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                    Text(
+                                        text = "المرجع: ${subscriber.refNumber}",
+                                        fontSize = 11.sp,
+                                        color = Color(0xFF64748B)
+                                    )
+                                    Text(
+                                        text = "آخر قراءة: ${subscriber.lastReading}",
+                                        fontSize = 11.sp,
+                                        color = Color(0xFF64748B)
+                                    )
+                                }
+                            }
+
+                            Surface(
+                                color = if (isRead) Color(0xFFF0FDF4) else Color(0xFFFFFBEB),
+                                shape = RoundedCornerShape(6.dp),
+                                border = androidx.compose.foundation.BorderStroke(1.dp, if (isRead) Color(0xFFBBF7D0) else Color(0xFFFDE68A))
+                            ) {
+                                Text(
+                                    text = if (isRead) "تمت القراءة" else "بانتظار القراءة",
+                                    fontSize = 10.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = if (isRead) Color(0xFF15803D) else Color(0xFFB45309),
+                                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 3.dp)
+                                )
+                            }
+                        }
+                    }
+                }
             }
         }
     }

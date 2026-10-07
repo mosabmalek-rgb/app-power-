@@ -1,7 +1,10 @@
 package com.example.ui.screens
 
 import android.widget.Toast
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
@@ -19,6 +22,8 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.example.data.ReadingCycleCalculator
+import com.example.data.ReadingCycleType
 import com.example.ui.FieldReadingViewModel
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -31,6 +36,9 @@ fun SettingsScreen(
     val userName by viewModel.userName.collectAsState()
     val userRole by viewModel.userRole.collectAsState()
     val companyName by viewModel.companyName.collectAsState()
+    val readingCycleType by viewModel.readingCycleType.collectAsState()
+    val weeklyCycleStartDay by viewModel.weeklyCycleStartDay.collectAsState()
+    val currentCycleRange by viewModel.currentCycleRange.collectAsState()
     val context = LocalContext.current
 
     Scaffold(
@@ -104,6 +112,155 @@ fun SettingsScreen(
                     DetailRow(label = "الأفرع المرخصة للعمل", value = "تُحدَّد تلقائياً من حساب PowerHub")
                     DetailRow(label = "بيانات الاتصال", value = "محفوظة بشكل محمي في الحساب")
                     DetailRow(label = "صلاحية التحصيل", value = "غير متاحة في تطبيق القراءات")
+                }
+            }
+
+            // Reading Cycle Settings Card (تحديد دورة القراءات)
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(16.dp),
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
+            ) {
+                Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(
+                            Icons.Default.CalendarMonth,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.size(24.dp)
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(
+                            "تحديد دورة القراءات",
+                            fontWeight = FontWeight.Bold,
+                            style = MaterialTheme.typography.titleMedium,
+                            color = MaterialTheme.colorScheme.primary
+                        )
+                    }
+
+                    Text(
+                        "اختر الدورة المعتمدة لحساب وإظهار المشتركين الذين تم أو لم يتم إدخال قراءاتهم:",
+                        fontSize = 12.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+
+                    // Current Active Cycle Banner
+                    Surface(
+                        color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.5f),
+                        shape = RoundedCornerShape(10.dp),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(12.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Icon(
+                                Icons.Default.Info,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.size(18.dp)
+                            )
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Column {
+                                Text(
+                                    "الدورة الحالية النشطة:",
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.Medium,
+                                    color = MaterialTheme.colorScheme.primary
+                                )
+                                Text(
+                                    currentCycleRange.labelAr,
+                                    fontSize = 12.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = MaterialTheme.colorScheme.onPrimaryContainer
+                                )
+                            }
+                        }
+                    }
+
+                    HorizontalDivider()
+
+                    // Cycle Options
+                    ReadingCycleType.values().forEach { cycleType ->
+                        val isSelected = readingCycleType == cycleType
+                        Surface(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable {
+                                    viewModel.setReadingCycleType(cycleType)
+                                    Toast.makeText(context, "تم تحديد الدورة: ${cycleType.titleAr}", Toast.LENGTH_SHORT).show()
+                                },
+                            shape = RoundedCornerShape(12.dp),
+                            color = if (isSelected) MaterialTheme.colorScheme.primary.copy(alpha = 0.08f) else MaterialTheme.colorScheme.surface,
+                            border = BorderStroke(
+                                width = if (isSelected) 1.5.dp else 1.dp,
+                                color = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant
+                            )
+                        ) {
+                            Column(modifier = Modifier.padding(12.dp)) {
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    RadioButton(
+                                        selected = isSelected,
+                                        onClick = {
+                                            viewModel.setReadingCycleType(cycleType)
+                                            Toast.makeText(context, "تم تحديد الدورة: ${cycleType.titleAr}", Toast.LENGTH_SHORT).show()
+                                        }
+                                    )
+                                    Spacer(modifier = Modifier.width(8.dp))
+                                    Column {
+                                        Text(
+                                            text = cycleType.titleAr,
+                                            fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
+                                            fontSize = 14.sp,
+                                            color = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface
+                                        )
+                                        Text(
+                                            text = cycleType.descriptionAr,
+                                            fontSize = 11.sp,
+                                            color = MaterialTheme.colorScheme.outline
+                                        )
+                                    }
+                                }
+
+                                // If WEEKLY is selected, show Day Picker
+                                if (cycleType == ReadingCycleType.WEEKLY && isSelected) {
+                                    Spacer(modifier = Modifier.height(10.dp))
+                                    Text(
+                                        text = "يوم بدء الدورة الأسبوعية:",
+                                        fontSize = 12.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        color = MaterialTheme.colorScheme.primary,
+                                        modifier = Modifier.padding(horizontal = 4.dp)
+                                    )
+                                    Spacer(modifier = Modifier.height(6.dp))
+                                    Row(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .horizontalScroll(rememberScrollState()),
+                                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                    ) {
+                                        ReadingCycleCalculator.ARABIC_DAYS.forEach { (calDay, dayName) ->
+                                            val isDaySelected = weeklyCycleStartDay == calDay
+                                            FilterChip(
+                                                selected = isDaySelected,
+                                                onClick = {
+                                                    viewModel.setWeeklyCycleStartDay(calDay)
+                                                    Toast.makeText(context, "بدء الدورة: يوم $dayName", Toast.LENGTH_SHORT).show()
+                                                },
+                                                label = {
+                                                    Text(dayName, fontSize = 11.sp, fontWeight = if (isDaySelected) FontWeight.Bold else FontWeight.Normal)
+                                                }
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
                 }
             }
 
