@@ -1,6 +1,11 @@
 package com.example.ui
 
 import android.app.Application
+import android.content.Context
+import android.net.ConnectivityManager
+import android.net.Network
+import android.net.NetworkCapabilities
+import android.net.NetworkRequest
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.data.*
@@ -160,6 +165,9 @@ class FieldReadingViewModel(application: Application) : AndroidViewModel(applica
     private val _isSyncing = MutableStateFlow(false)
     val isSyncing: StateFlow<Boolean> = _isSyncing.asStateFlow()
 
+    private val connectivityManager = application.getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager
+    private var networkCallback: ConnectivityManager.NetworkCallback? = null
+
     init {
         // Auto-refresh/populate subscriber list if database is empty on start
         viewModelScope.launch {
@@ -167,6 +175,36 @@ class FieldReadingViewModel(application: Application) : AndroidViewModel(applica
             if (subscribers.value.isEmpty()) {
                 repository.refreshSubscribers()
             }
+        }
+
+        // Automatic synchronization upon internet connection
+        runCatching {
+            val cm = connectivityManager
+            if (cm != null) {
+                val callback = object : ConnectivityManager.NetworkCallback() {
+                    override fun onAvailable(network: Network) {
+                        viewModelScope.launch {
+                            // Check if we have pending items to sync
+                            val pending = pendingReadings.value.filter { it.status == "pending" }
+                            if (pending.isNotEmpty() && !_isSyncing.value) {
+                                syncAllData()
+                            }
+                        }
+                    }
+                }
+                networkCallback = callback
+                val request = NetworkRequest.Builder()
+                    .addCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
+                    .build()
+                cm.registerNetworkCallback(request, callback)
+            }
+        }
+    }
+
+    override fun onCleared() {
+        super.onCleared()
+        runCatching {
+            networkCallback?.let { connectivityManager?.unregisterNetworkCallback(it) }
         }
     }
 
