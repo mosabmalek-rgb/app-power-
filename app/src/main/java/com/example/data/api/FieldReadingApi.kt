@@ -21,6 +21,14 @@ data class MobileSubscriberDto(
 )
 data class MobileSubscribersResponse(val items: List<MobileSubscriberDto>, val nextCursor: String?)
 
+data class MobileReadingCycleDto(
+    val cycleType: String,
+    val weeklyStartDay: Int,
+    val monthlyStartDay: Int,
+    val timezone: String
+)
+data class MobileReadingCycleResponse(val cycle: MobileReadingCycleDto)
+
 data class MobileReadingRequest(
     val clientOperationId: String,
     val branchId: Long,
@@ -71,6 +79,9 @@ interface FieldReadingApi {
 
     @GET("api/mobile/v1/subscribers")
     suspend fun getSubscribers(@Query("branchId") branchId: Long, @Query("limit") limit: Int = 100, @Query("cursor") cursor: String? = null): MobileSubscribersResponse
+
+    @GET("api/mobile/v1/reading-cycle")
+    suspend fun getReadingCycle(@Query("branchId") branchId: Long): MobileReadingCycleResponse
 
     @POST("api/mobile/v1/readings")
     suspend fun createReading(@Body request: MobileReadingRequest): MobileReadingResponse
