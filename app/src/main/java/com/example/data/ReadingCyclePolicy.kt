@@ -176,7 +176,7 @@ object ReadingCycleCalculator {
             ReadingCycleType.MONTHLY -> {
                 val configuredDay = if (monthlyStartDay == 30) 30 else 1
                 val currentLast = cal.getActualMaximum(Calendar.DAY_OF_MONTH)
-                val currentStartDay = minOf(configuredDay, currentLast)
+                val currentStartDay = if (configuredDay == 30 && cal.get(Calendar.MONTH) == Calendar.FEBRUARY) 28 else minOf(configuredDay, currentLast)
                 val currentStart = Calendar.getInstance().apply {
                     time = referenceDate
                     set(Calendar.DAY_OF_MONTH, currentStartDay)
@@ -189,7 +189,8 @@ object ReadingCycleCalculator {
                     time = referenceDate
                     add(Calendar.MONTH, -1)
                     val last = getActualMaximum(Calendar.DAY_OF_MONTH)
-                    set(Calendar.DAY_OF_MONTH, minOf(configuredDay, last))
+                    val month = get(Calendar.MONTH)
+                    set(Calendar.DAY_OF_MONTH, if (configuredDay == 30 && month == Calendar.FEBRUARY) 28 else minOf(configuredDay, last))
                     set(Calendar.HOUR_OF_DAY, 0)
                     set(Calendar.MINUTE, 0)
                     set(Calendar.SECOND, 0)
