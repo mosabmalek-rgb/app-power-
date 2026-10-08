@@ -23,10 +23,14 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.data.ReadingCycleCalculator
@@ -66,6 +70,12 @@ fun SettingsScreen(
             }
         }
     }
+
+    var showChangePinDialog by remember { mutableStateOf(false) }
+    var currentPinInput by remember { mutableStateOf("") }
+    var newPinInput by remember { mutableStateOf("") }
+    var confirmNewPinInput by remember { mutableStateOf("") }
+    var pinDialogError by remember { mutableStateOf<String?>(null) }
 
     Scaffold(
         topBar = {
@@ -190,6 +200,186 @@ fun SettingsScreen(
                 }
             }
 
+            // Security & Application PIN Card (أمان التطبيق ورمز PIN)
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(16.dp),
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
+            ) {
+                Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Icon(
+                                Icons.Default.Lock,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.size(24.dp)
+                            )
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text(
+                                "أمان التطبيق ورمز PIN",
+                                fontWeight = FontWeight.Bold,
+                                style = MaterialTheme.typography.titleMedium,
+                                color = MaterialTheme.colorScheme.primary
+                            )
+                        }
+                        Surface(
+                            color = Color(0xFFF0FDF4),
+                            shape = RoundedCornerShape(6.dp),
+                            border = BorderStroke(1.dp, Color(0xFFBBF7D0))
+                        ) {
+                            Text(
+                                text = if (viewModel.hasLocalPin()) "مفعّل ومحمي" else "غير معين",
+                                fontSize = 10.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = Color(0xFF166534),
+                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                            )
+                        }
+                    }
+
+                    Text(
+                        "يُستخدم رمز الـ PIN المكون من 4 أرقام لفتح قفل التطبيق بسرعة بدون الحاجة لإعادة كتابة كلمة المرور في كل مرة.",
+                        fontSize = 12.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+
+                    Button(
+                        onClick = {
+                            currentPinInput = ""
+                            newPinInput = ""
+                            confirmNewPinInput = ""
+                            pinDialogError = null
+                            showChangePinDialog = true
+                        },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .testTag("change_pin_button"),
+                        shape = RoundedCornerShape(10.dp),
+                        colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.secondary)
+                    ) {
+                        Icon(Icons.Default.VpnKey, contentDescription = null, modifier = Modifier.size(18.dp))
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(
+                            if (viewModel.hasLocalPin()) "تغيير رمز PIN لفتح التطبيق" else "تعيين رمز PIN جديد",
+                            fontSize = 13.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+                }
+            }
+
+            // Change PIN Dialog
+            if (showChangePinDialog) {
+                AlertDialog(
+                    onDismissRequest = { showChangePinDialog = false },
+                    icon = {
+                        Icon(
+                            Icons.Default.Password,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.size(32.dp)
+                        )
+                    },
+                    title = {
+                        Text(
+                            text = if (viewModel.hasLocalPin()) "تغيير رمز PIN" else "تعيين رمز PIN",
+                            fontWeight = FontWeight.Bold,
+                            style = MaterialTheme.typography.titleMedium
+                        )
+                    },
+                    text = {
+                        Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                            Text(
+                                text = "أدخل رمز الـ PIN الحالي ثم اختر رمزاً جديداً مكوناً من 4 أرقام:",
+                                fontSize = 12.sp,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+
+                            if (viewModel.hasLocalPin()) {
+                                OutlinedTextField(
+                                    value = currentPinInput,
+                                    onValueChange = { if (it.length <= 4 && it.all { c -> c.isDigit() }) currentPinInput = it },
+                                    label = { Text("رمز PIN الحالي (4 أرقام)") },
+                                    singleLine = true,
+                                    visualTransformation = PasswordVisualTransformation(),
+                                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.NumberPassword),
+                                    modifier = Modifier.fillMaxWidth().testTag("current_pin_input")
+                                )
+                            }
+
+                            OutlinedTextField(
+                                value = newPinInput,
+                                onValueChange = { if (it.length <= 4 && it.all { c -> c.isDigit() }) newPinInput = it },
+                                label = { Text("رمز PIN الجديد (4 أرقام)") },
+                                singleLine = true,
+                                visualTransformation = PasswordVisualTransformation(),
+                                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.NumberPassword),
+                                modifier = Modifier.fillMaxWidth().testTag("new_pin_input")
+                            )
+
+                            OutlinedTextField(
+                                value = confirmNewPinInput,
+                                onValueChange = { if (it.length <= 4 && it.all { c -> c.isDigit() }) confirmNewPinInput = it },
+                                label = { Text("تأكيد رمز PIN الجديد") },
+                                singleLine = true,
+                                visualTransformation = PasswordVisualTransformation(),
+                                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.NumberPassword),
+                                modifier = Modifier.fillMaxWidth().testTag("confirm_new_pin_input")
+                            )
+
+                            if (pinDialogError != null) {
+                                Text(
+                                    text = pinDialogError!!,
+                                    color = MaterialTheme.colorScheme.error,
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.Bold
+                                )
+                            }
+                        }
+                    },
+                    confirmButton = {
+                        Button(
+                            onClick = {
+                                if (viewModel.hasLocalPin() && !viewModel.verifyLocalPin(currentPinInput)) {
+                                    pinDialogError = "رمز PIN الحالي غير صحيح!"
+                                    return@Button
+                                }
+                                if (newPinInput.length != 4) {
+                                    pinDialogError = "يجب أن يتكون رمز PIN الجديد من 4 أرقام."
+                                    return@Button
+                                }
+                                if (newPinInput != confirmNewPinInput) {
+                                    pinDialogError = "رمز التأكيد غير متطابق مع الرمز الجديد."
+                                    return@Button
+                                }
+
+                                val success = viewModel.setLocalPin(newPinInput)
+                                if (success) {
+                                    showChangePinDialog = false
+                                    Toast.makeText(context, "تم تحديث رمز PIN بنجاح! 🔒", Toast.LENGTH_SHORT).show()
+                                } else {
+                                    pinDialogError = "تعذر حفظ رمز PIN على الجهاز."
+                                }
+                            },
+                            modifier = Modifier.testTag("confirm_change_pin_button")
+                        ) {
+                            Text("حفظ الرمز الجديد", fontWeight = FontWeight.Bold)
+                        }
+                    },
+                    dismissButton = {
+                        TextButton(onClick = { showChangePinDialog = false }) {
+                            Text("إلغاء")
+                        }
+                    }
+                )
+            }
+
             // Reading Cycle Settings Card (تحديد دورة القراءات)
             Card(
                 modifier = Modifier.fillMaxWidth(),
@@ -206,16 +396,30 @@ fun SettingsScreen(
                             modifier = Modifier.size(24.dp)
                         )
                         Spacer(modifier = Modifier.width(8.dp))
-                        Text(
-                            "تحديد دورة القراءات",
-                            fontWeight = FontWeight.Bold,
-                            style = MaterialTheme.typography.titleMedium,
-                            color = MaterialTheme.colorScheme.primary
-                        )
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                "تحديد دورة القراءات",
+                                fontWeight = FontWeight.Bold,
+                                style = MaterialTheme.typography.titleMedium,
+                                color = MaterialTheme.colorScheme.primary
+                            )
+                        }
+                        Surface(
+                            color = MaterialTheme.colorScheme.primary.copy(alpha = 0.1f),
+                            shape = RoundedCornerShape(6.dp)
+                        ) {
+                            Text(
+                                text = "مزامنة المنصة والسيرفر",
+                                fontSize = 10.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                            )
+                        }
                     }
 
                     Text(
-                        "اختر الدورة المعتمدة لحساب وإظهار المشتركين الذين تم أو لم يتم إدخال قراءاتهم:",
+                        "تتم إدارة وتعيين منطق دورة القراءات مركزياً من المنصة والسيرفر، ويتم تطبيقها محلياً لحساب نسب الإنجاز وفرز المشتركين:",
                         fontSize = 12.sp,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )

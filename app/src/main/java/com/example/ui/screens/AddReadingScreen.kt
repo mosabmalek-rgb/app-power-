@@ -22,6 +22,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
@@ -66,6 +67,19 @@ fun AddReadingScreen(
     var lastConfirmedLocation by remember { mutableStateOf<Pair<Double, Double>?>(null) }
     var pendingLocation by remember { mutableStateOf<Pair<Double, Double>?>(null) }
     var showLocationDialog by remember { mutableStateOf(false) }
+    var showSanityConfirmDialog by remember { mutableStateOf(false) }
+    var sanityWarningMessage by remember { mutableStateOf("") }
+
+    // When subscriber changes (e.g. Next subscriber clicked), reset fields
+    LaunchedEffect(subscriber?.id) {
+        currentReadingStr = ""
+        notes = ""
+        isReadingReset = false
+        capturedPhotoPath = null
+        extractedReading = null
+        ocrMessage = null
+        readingApproved = false
+    }
 
     val fusedLocation = remember { LocationServices.getFusedLocationProviderClient(context) }
 
@@ -179,6 +193,54 @@ fun AddReadingScreen(
         )
     }
 
+    // Sanity check alert dialog for abnormal or negative consumption
+    if (showSanityConfirmDialog) {
+        AlertDialog(
+            onDismissRequest = { showSanityConfirmDialog = false },
+            icon = { Icon(Icons.Default.WarningAmber, contentDescription = null, tint = MaterialTheme.colorScheme.error) },
+            title = { Text("تأكيد اعتماد القراءة", fontWeight = FontWeight.Bold) },
+            text = { Text(sanityWarningMessage) },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        showSanityConfirmDialog = false
+                        val readingVal = currentReadingStr.toDoubleOrNull() ?: return@Button
+                        val sub = subscriber ?: return@Button
+                        viewModel.saveReading(
+                            subscriberId = sub.id,
+                            currentReading = readingVal,
+                            notes = notes,
+                            latitude = latitude ?: 0.0,
+                            longitude = longitude ?: 0.0,
+                            photoPath = capturedPhotoPath,
+                            isReadingReset = isReadingReset,
+                            fieldVerified = true
+                        ) { success, message ->
+                            Toast.makeText(context, message, Toast.LENGTH_SHORT).show()
+                            if (success) {
+                                val nextSub = viewModel.getNextUnreadSubscriber(sub.id)
+                                if (nextSub != null) {
+                                    viewModel.selectSubscriber(nextSub.id)
+                                    Toast.makeText(context, "تم الانتقال للمشترك التالي: ${nextSub.name}", Toast.LENGTH_SHORT).show()
+                                } else {
+                                    onBack()
+                                }
+                            }
+                        }
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)
+                ) {
+                    Text("نعم، اعتمد القراءة واحفظ")
+                }
+            },
+            dismissButton = {
+                OutlinedButton(onClick = { showSanityConfirmDialog = false }) {
+                    Text("مراجعة الرقم وتعديله")
+                }
+            }
+        )
+    }
+
     Scaffold(
         topBar = {
             TopAppBar(
@@ -262,10 +324,79 @@ fun AddReadingScreen(
                         )
                         if (currentReadingStr.isNotEmpty()) {
                             val isInvalid = !isReadingReset && currentReadingVal < lastReading
-                            Card(colors = CardDefaults.cardColors(containerColor = if (isInvalid) MaterialTheme.colorScheme.errorContainer else MaterialTheme.colorScheme.primaryContainer), modifier = Modifier.fillMaxWidth()) {
-                                Column(modifier = Modifier.padding(12.dp)) {
-                                    if (isInvalid) Text("خطأ: القراءة الحالية يجب أن تكون أكبر من أو تساوي القراءة السابقة ($lastReading) إلا في حال تفعيل إعادة ضبط سجل القراءة أعلاه.", color = MaterialTheme.colorScheme.onErrorContainer, fontWeight = FontWeight.Bold, fontSize = 12.sp)
-                                    else Text(if (isReadingReset) "نمط إعادة الضبط: احتساب القراءة الحالية كبداية جديدة" else "الاستهلاك الحالي المحتسب تلقائياً: ${consumption} كيلو واط /ساعة", color = MaterialTheme.colorScheme.onPrimaryContainer, fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                            val isVeryHigh = !isReadingReset && consumption > 500.0 && consumption > lastReading * 3
+                            
+                            val cardBg = when {
+                                isInvalid -> MaterialTheme.colorScheme.errorContainer
+                                isVeryHigh -> Color(0xFFFFF3CD)
+                                else -> Color(0xFFF0FDF4)
+                            }
+                            val cardBorder = when {
+                                isInvalid -> MaterialTheme.colorScheme.error
+                                isVeryHigh -> Color(0xFFFFC107)
+                                else -> Color(0xFF86EFAC)
+                            }
+
+                            Card(
+                                colors = CardDefaults.cardColors(containerColor = cardBg),
+                                border = androidx.compose.foundation.BorderStroke(1.dp, cardBorder),
+                                shape = RoundedCornerShape(10.dp),
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                                    if (isInvalid) {
+                                        Row(verticalAlignment = Alignment.CenterVertically) {
+                                            Icon(Icons.Default.ErrorOutline, contentDescription = null, tint = MaterialTheme.colorScheme.error, modifier = Modifier.size(18.dp))
+                                            Spacer(modifier = Modifier.width(6.dp))
+                                            Text(
+                                                "خطأ: القراءة الحالية أقل من السابقة ($lastReading ك.و)",
+                                                color = MaterialTheme.colorScheme.onErrorContainer,
+                                                fontWeight = FontWeight.Bold,
+                                                fontSize = 12.sp
+                                            )
+                                        }
+                                        Text(
+                                            "يجب تفعيل خيار «إعادة ضبط سجل القراءة» أعلاه إذا تم استبدال أو تصفير العداد.",
+                                            color = MaterialTheme.colorScheme.onErrorContainer.copy(alpha = 0.85f),
+                                            fontSize = 11.sp
+                                        )
+                                    } else {
+                                        Row(
+                                            modifier = Modifier.fillMaxWidth(),
+                                            horizontalArrangement = Arrangement.SpaceBetween,
+                                            verticalAlignment = Alignment.CenterVertically
+                                        ) {
+                                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                                Icon(
+                                                    if (isVeryHigh) Icons.Default.WarningAmber else Icons.Default.ElectricBolt,
+                                                    contentDescription = null,
+                                                    tint = if (isVeryHigh) Color(0xFF856404) else Color(0xFF166534),
+                                                    modifier = Modifier.size(20.dp)
+                                                )
+                                                Spacer(modifier = Modifier.width(6.dp))
+                                                Text(
+                                                    if (isReadingReset) "نمط إعادة الضبط (بداية جديدة)" else "الاستهلاك المحتسب تلقائياً:",
+                                                    fontWeight = FontWeight.Bold,
+                                                    fontSize = 12.sp,
+                                                    color = if (isVeryHigh) Color(0xFF856404) else Color(0xFF166534)
+                                                )
+                                            }
+                                            Text(
+                                                text = "${String.format(java.util.Locale.US, "%.1f", consumption)} ك.و/س",
+                                                fontWeight = FontWeight.ExtraBold,
+                                                fontSize = 15.sp,
+                                                color = if (isVeryHigh) Color(0xFF856404) else Color(0xFF166534)
+                                            )
+                                        }
+                                        if (isVeryHigh) {
+                                            Text(
+                                                "⚠️ تنبيه: الاستهلاك مرتفع جداً مقارنة بالمعدل السابق، يرجى التأكد من العداد.",
+                                                fontSize = 11.sp,
+                                                color = Color(0xFF856404),
+                                                fontWeight = FontWeight.Medium
+                                            )
+                                        }
+                                    }
                                 }
                             }
                         }
@@ -344,33 +475,78 @@ fun AddReadingScreen(
                 }
 
                 OutlinedTextField(value = notes, onValueChange = { notes = it }, label = { Text("ملاحظات ميدانية إضافية") }, placeholder = { Text("أدخل أي ملاحظات حول القراءة أو موقع العميل...") }, leadingIcon = { Icon(Icons.Default.Comment, contentDescription = null) }, modifier = Modifier.fillMaxWidth().testTag("notes_input_field"), shape = RoundedCornerShape(10.dp))
-                Spacer(modifier = Modifier.height(12.dp))
+                Spacer(modifier = Modifier.height(14.dp))
+
+                val executeSave = { navigateToNext: Boolean ->
+                    val readingVal = currentReadingStr.toDoubleOrNull()
+                    if (readingVal == null) {
+                        Toast.makeText(context, "الرجاء إدخال رقم قراءة صحيح أولاً", Toast.LENGTH_SHORT).show()
+                    } else if (capturedPhotoPath != null && !readingApproved) {
+                        Toast.makeText(context, "راجع القراءة المستخلصة واضغط اعتماد القراءة أولاً.", Toast.LENGTH_SHORT).show()
+                    } else if (!isReadingReset && readingVal < sub.lastReading) {
+                        Toast.makeText(context, "القراءة أقل من السابقة! قم بتفعيل إعادة الضبط إذا تم تصفير العداد.", Toast.LENGTH_LONG).show()
+                    } else if (!isReadingReset && consumption > 500.0 && consumption > sub.lastReading * 3) {
+                        sanityWarningMessage = "الاستهلاك المحتسب (${consumption} ك.و) يبدو مرتفعاً بشكل غير معتاد مقارنة بالقراءة السابقة (${sub.lastReading} ك.و).\nهل أنت متأكد من صحة الرقم؟"
+                        showSanityConfirmDialog = true
+                    } else {
+                        viewModel.saveReading(
+                            subscriberId = sub.id,
+                            currentReading = readingVal,
+                            notes = notes,
+                            latitude = latitude ?: 0.0,
+                            longitude = longitude ?: 0.0,
+                            photoPath = capturedPhotoPath,
+                            isReadingReset = isReadingReset,
+                            fieldVerified = true
+                        ) { success, message ->
+                            Toast.makeText(context, message, Toast.LENGTH_SHORT).show()
+                            if (success) {
+                                if (navigateToNext) {
+                                    val nextSub = viewModel.getNextUnreadSubscriber(sub.id)
+                                    if (nextSub != null) {
+                                        viewModel.selectSubscriber(nextSub.id)
+                                        Toast.makeText(context, "الانتقال للمشترك التالي: ${nextSub.name}", Toast.LENGTH_SHORT).show()
+                                    } else {
+                                        Toast.makeText(context, "تم إنجاز جميع المشتركين المتبقين! 🎉", Toast.LENGTH_SHORT).show()
+                                        onBack()
+                                    }
+                                } else {
+                                    onBack()
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // Primary Quick Save & Next Button
                 Button(
-                    onClick = {
-                        val readingVal = currentReadingStr.toDoubleOrNull()
-                        if (readingVal == null) {
-                            Toast.makeText(context, "الرجاء إدخال رقم قراءة صحيح أولاً", Toast.LENGTH_SHORT).show()
-                            return@Button
-                        }
-                        if (capturedPhotoPath != null && !readingApproved) {
-                            Toast.makeText(context, "راجع القراءة المستخلصة واضغط اعتماد القراءة أولاً.", Toast.LENGTH_SHORT).show()
-                            return@Button
-                        }
-                        viewModel.saveReading(subscriberId = sub.id, currentReading = readingVal, notes = notes, latitude = latitude ?: 0.0, longitude = longitude ?: 0.0, photoPath = capturedPhotoPath, isReadingReset = isReadingReset, fieldVerified = true) { success, message ->
-                            Toast.makeText(context, message, Toast.LENGTH_LONG).show()
-                            if (success) onBack()
-                        }
-                    },
-                    modifier = Modifier.fillMaxWidth().height(52.dp).testTag("save_reading_submit_button"),
+                    onClick = { executeSave(true) },
+                    modifier = Modifier.fillMaxWidth().height(52.dp).testTag("save_and_next_reading_button"),
                     shape = RoundedCornerShape(12.dp),
                     colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary)
                 ) {
                     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.Center) {
-                        Icon(Icons.Default.Save, contentDescription = null)
+                        Icon(Icons.Default.SkipNext, contentDescription = null)
                         Spacer(modifier = Modifier.width(8.dp))
-                        Text("حفظ القراءة محلياً", fontSize = 16.sp, fontWeight = FontWeight.Bold)
+                        Text("حفظ والانتقال للمشترك التالي مباشرة ⚡", fontSize = 15.sp, fontWeight = FontWeight.Bold)
                     }
                 }
+
+                Spacer(modifier = Modifier.height(8.dp))
+
+                // Secondary Save & Exit Button
+                OutlinedButton(
+                    onClick = { executeSave(false) },
+                    modifier = Modifier.fillMaxWidth().height(48.dp).testTag("save_reading_submit_button"),
+                    shape = RoundedCornerShape(12.dp)
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.Center) {
+                        Icon(Icons.Default.Save, contentDescription = null, modifier = Modifier.size(18.dp))
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text("حفظ والعودة للقائمة", fontSize = 14.sp, fontWeight = FontWeight.Medium)
+                    }
+                }
+
                 Spacer(modifier = Modifier.height(32.dp))
             }
         }

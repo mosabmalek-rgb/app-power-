@@ -2,6 +2,8 @@ package com.example.ui.screens
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -18,8 +20,14 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.platform.LocalContext
+import androidx.core.content.ContextCompat
+import android.Manifest
+import android.content.pm.PackageManager
+import com.google.android.gms.location.LocationServices
 import com.example.data.SubscriberEntity
 import com.example.data.SubscriberCycleFilter
+import com.example.data.SubscriberSortOrder
 import com.example.ui.FieldReadingViewModel
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -37,6 +45,19 @@ fun SubscribersScreen(
     val readCount by viewModel.readSubscribersCount.collectAsState()
     val currentCycleRange by viewModel.currentCycleRange.collectAsState()
     val cycleFilter by viewModel.cycleFilter.collectAsState()
+    val sortOrder by viewModel.sortOrder.collectAsState()
+
+    val context = LocalContext.current
+    LaunchedEffect(Unit) {
+        if (ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED) {
+            val fusedLocation = LocationServices.getFusedLocationProviderClient(context)
+            fusedLocation.lastLocation.addOnSuccessListener { loc ->
+                if (loc != null) {
+                    viewModel.updateUserLocation(loc.latitude, loc.longitude)
+                }
+            }
+        }
+    }
 
     Scaffold(
         topBar = {
@@ -230,6 +251,51 @@ fun SubscribersScreen(
                     modifier = Modifier.weight(1f)
                 )
             }
+
+            // Sorting Selection Bar (حسب الأقرب GPS / الترتيب السابق / الافتراضي)
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp, vertical = 2.dp)
+                    .horizontalScroll(rememberScrollState()),
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = "ترتيب القائمة:",
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                SubscriberSortOrder.values().forEach { order ->
+                    val isSelected = sortOrder == order
+                    FilterChip(
+                        selected = isSelected,
+                        onClick = { viewModel.setSortOrder(order) },
+                        label = {
+                            Text(
+                                order.titleAr,
+                                fontSize = 11.sp,
+                                fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal
+                            )
+                        },
+                        leadingIcon = {
+                            when (order) {
+                                SubscriberSortOrder.DEFAULT -> Icon(Icons.Default.SortByAlpha, contentDescription = null, modifier = Modifier.size(14.dp))
+                                SubscriberSortOrder.PREVIOUS_INPUT_ORDER -> Icon(Icons.Default.HistoryToggleOff, contentDescription = null, modifier = Modifier.size(14.dp))
+                                SubscriberSortOrder.NEAREST_LOCATION -> Icon(Icons.Default.NearMe, contentDescription = null, modifier = Modifier.size(14.dp))
+                            }
+                        },
+                        shape = RoundedCornerShape(8.dp),
+                        colors = FilterChipDefaults.filterChipColors(
+                            selectedContainerColor = MaterialTheme.colorScheme.secondaryContainer,
+                            selectedLabelColor = MaterialTheme.colorScheme.onSecondaryContainer,
+                            selectedLeadingIconColor = MaterialTheme.colorScheme.onSecondaryContainer
+                        )
+                    )
+                }
+            }
+            Spacer(modifier = Modifier.height(4.dp))
 
             if (filteredSubs.isEmpty()) {
                 Box(

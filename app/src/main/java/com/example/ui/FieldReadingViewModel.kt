@@ -83,6 +83,22 @@ class FieldReadingViewModel(application: Application) : AndroidViewModel(applica
     private val _cycleFilter = MutableStateFlow(SubscriberCycleFilter.ALL)
     val cycleFilter: StateFlow<SubscriberCycleFilter> = _cycleFilter.asStateFlow()
 
+    // Subscriber Sorting Mode
+    private val _sortOrder = MutableStateFlow(SubscriberSortOrder.DEFAULT)
+    val sortOrder: StateFlow<SubscriberSortOrder> = _sortOrder.asStateFlow()
+
+    // Current Device Location for proximity sorting
+    private val _currentLocation = MutableStateFlow<Pair<Double, Double>?>(null)
+    val currentLocation: StateFlow<Pair<Double, Double>?> = _currentLocation.asStateFlow()
+
+    fun setSortOrder(order: SubscriberSortOrder) {
+        _sortOrder.value = order
+    }
+
+    fun updateUserLocation(lat: Double, lng: Double) {
+        _currentLocation.value = lat to lng
+    }
+
     fun setCycleFilter(filter: SubscriberCycleFilter) {
         _cycleFilter.value = filter
     }
@@ -130,15 +146,28 @@ class FieldReadingViewModel(application: Application) : AndroidViewModel(applica
         }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), null)
 
-    // Filtered Subscribers (Arabic Search & Cycle Filter)
+    // Filtered & Sorted Subscribers (Arabic Search, Cycle Filter, GPS Proximity & History Order)
     val filteredSubscribers: StateFlow<List<SubscriberEntity>> = combine(
         subscribers,
         _searchQuery,
         _cycleFilter,
+        _sortOrder,
+        _currentLocation,
         pendingReadings,
         currentCycleRange
-    ) { subs, query, filter, readings, cycle ->
-        subs.filter { sub ->
+    ) { args: Array<Any?> ->
+        @Suppress("UNCHECKED_CAST")
+        val subs = args[0] as List<SubscriberEntity>
+        val query = args[1] as String
+        val filter = args[2] as SubscriberCycleFilter
+        val sort = args[3] as SubscriberSortOrder
+        @Suppress("UNCHECKED_CAST")
+        val myLoc = args[4] as? Pair<Double, Double>
+        @Suppress("UNCHECKED_CAST")
+        val readings = args[5] as List<PendingReadingEntity>
+        val cycle = args[6] as CycleDateRange
+
+        val filtered = subs.filter { sub ->
             val matchesQuery = if (query.isBlank()) true else {
                 sub.name.contains(query, ignoreCase = true) ||
                 sub.refNumber.contains(query, ignoreCase = true) ||
@@ -152,8 +181,46 @@ class FieldReadingViewModel(application: Application) : AndroidViewModel(applica
             }
             matchesQuery && matchesFilter
         }
+
+        when (sort) {
+            SubscriberSortOrder.DEFAULT -> filtered
+            SubscriberSortOrder.PREVIOUS_INPUT_ORDER -> {
+                // Sort by last reading date / timestamp descending (or most recently handled order)
+                filtered.sortedByDescending { it.lastReadingDate }
+            }
+            SubscriberSortOrder.NEAREST_LOCATION -> {
+                if (myLoc != null) {
+                    filtered.sortedBy { sub ->
+                        // Match with pending reading location if available, otherwise keep original order
+                        val subReading = readings.firstOrNull { it.subscriberId == sub.id && it.latitude != 0.0 }
+                        if (subReading != null) {
+                            val dLat = Math.toRadians(subReading.latitude - myLoc.first)
+                            val dLon = Math.toRadians(subReading.longitude - myLoc.second)
+                            val a = Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+                                    Math.cos(Math.toRadians(myLoc.first)) * Math.cos(Math.toRadians(subReading.latitude)) *
+                                    Math.sin(dLon / 2) * Math.sin(dLon / 2)
+                            val c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a))
+                            6371000.0 * c
+                        } else {
+                            Double.MAX_VALUE
+                        }
+                    }
+                } else filtered
+            }
+        }
     }
     .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    fun getNextUnreadSubscriber(currentSubscriberId: String): SubscriberEntity? {
+        val currentList = filteredSubscribers.value
+        val unreadList = currentList.filter { !isSubscriberReadInCurrentCycle(it) }
+        val currentIndexInUnread = unreadList.indexOfFirst { it.id == currentSubscriberId }
+        return if (currentIndexInUnread in 0 until unreadList.size - 1) {
+            unreadList[currentIndexInUnread + 1]
+        } else {
+            unreadList.firstOrNull { it.id != currentSubscriberId }
+        }
+    }
 
     // Synchronization States
     private val _syncProgress = MutableStateFlow(0)

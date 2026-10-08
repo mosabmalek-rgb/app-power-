@@ -7,7 +7,7 @@ enum class ReadingCycleType(val code: String, val titleAr: String, val descripti
     WEEKLY("WEEKLY", "كل أسبوع", "أسبوعياً مع تحديد يوم بدء الدورة"),
     EVERY_10_DAYS("EVERY_10_DAYS", "كل 10 أيام (1، 11، 21)", "تقسيم الشهر إلى 3 دورات: (1-10)، (11-20)، (21-نهاية الشهر)"),
     EVERY_15_DAYS("EVERY_15_DAYS", "كل 15 يوم (1، 16)", "تقسيم الشهر إلى دورتين: (1-15)، (16-نهاية الشهر)"),
-    MONTHLY("MONTHLY", "كل شهر (1 الشهر)", "دورة شهرية واحدة تبدأ في الأول من كل شهر")
+    MONTHLY("MONTHLY", "كل شهر (1 أو 30 الشهر \"عدا شهر فبراير 28\")", "دورة شهرية منتظمة تغطي دورة القراءات من بداية الشهر حتى نهايته")
 }
 
 enum class SubscriberCycleFilter(val titleAr: String) {

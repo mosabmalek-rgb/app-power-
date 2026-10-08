@@ -57,6 +57,9 @@ fun DashboardScreen(
     val unreadThisCycleCount by viewModel.unreadSubscribersCount.collectAsState()
     val readThisCycleCount by viewModel.readSubscribersCount.collectAsState()
     val currentCycleRange by viewModel.currentCycleRange.collectAsState()
+    val isSyncing by viewModel.isSyncing.collectAsState()
+    val syncProgress by viewModel.syncProgress.collectAsState()
+    val syncStatusMessage by viewModel.syncStatusMessage.collectAsState()
 
     val pendingReadingsCount = pendingReadings.filter { it.status == "pending" }.size
     val totalPending = pendingReadingsCount
@@ -319,10 +322,10 @@ fun DashboardScreen(
                         }
 
                         // Connectivity badge matching tailwind style
-                        val statusBg = if (totalPending > 0) Color(0x33FF5252) else Color(0x334CAF50)
-                        val statusText = if (totalPending > 0) "غير متصل" else "متصل"
-                        val statusBorder = if (totalPending > 0) Color(0x66FF5252) else Color(0x664CAF50)
-                        val statusDotColor = if (totalPending > 0) Color(0xFFFF5252) else Color(0xFF4CAF50)
+                        val statusBg = if (isSyncing) Color(0x332196F3) else if (totalPending > 0) Color(0x33FF9800) else Color(0x334CAF50)
+                        val statusText = if (isSyncing) "جاري المزامنة..." else if (totalPending > 0) "معلق محلياً ($totalPending)" else "متصل ومزامن"
+                        val statusBorder = if (isSyncing) Color(0x662196F3) else if (totalPending > 0) Color(0x66FF9800) else Color(0x664CAF50)
+                        val statusDotColor = if (isSyncing) Color(0xFF2196F3) else if (totalPending > 0) Color(0xFFFF9800) else Color(0xFF4CAF50)
 
                         Row(
                             verticalAlignment = Alignment.CenterVertically,
@@ -331,18 +334,64 @@ fun DashboardScreen(
                                 .border(1.dp, statusBorder, RoundedCornerShape(12.dp))
                                 .padding(horizontal = 10.dp, vertical = 5.dp)
                         ) {
-                            Box(
-                                modifier = Modifier
-                                    .size(7.dp)
-                                    .background(statusDotColor, CircleShape)
-                            )
-                            Spacer(modifier = Modifier.width(5.dp))
+                            if (isSyncing) {
+                                CircularProgressIndicator(
+                                    modifier = Modifier.size(10.dp),
+                                    color = Color.White,
+                                    strokeWidth = 1.5.dp
+                                )
+                            } else {
+                                Box(
+                                    modifier = Modifier
+                                        .size(7.dp)
+                                        .background(statusDotColor, CircleShape)
+                                )
+                            }
+                            Spacer(modifier = Modifier.width(6.dp))
                             Text(
                                 text = statusText,
                                 fontSize = 11.sp,
                                 color = Color.White,
                                 fontWeight = FontWeight.Bold
                             )
+                        }
+                    }
+
+                    // Floating real-time auto sync progress bar
+                    if (isSyncing) {
+                        Spacer(modifier = Modifier.height(10.dp))
+                        Surface(
+                            color = Color.White.copy(alpha = 0.16f),
+                            shape = RoundedCornerShape(8.dp),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Column(modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp)) {
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Text(
+                                        text = syncStatusMessage.ifBlank { "جاري المزامنة التلقائية مع السيرفر..." },
+                                        fontSize = 11.sp,
+                                        color = Color.White,
+                                        fontWeight = FontWeight.Medium
+                                    )
+                                    Text(
+                                        text = "$syncProgress%",
+                                        fontSize = 11.sp,
+                                        color = Color(0xFFFFD54F),
+                                        fontWeight = FontWeight.Bold
+                                    )
+                                }
+                                Spacer(modifier = Modifier.height(4.dp))
+                                LinearProgressIndicator(
+                                    progress = { syncProgress / 100f },
+                                    modifier = Modifier.fillMaxWidth().height(4.dp).clip(RoundedCornerShape(2.dp)),
+                                    color = Color(0xFFFFD54F),
+                                    trackColor = Color.White.copy(alpha = 0.2f)
+                                )
+                            }
                         }
                     }
 
