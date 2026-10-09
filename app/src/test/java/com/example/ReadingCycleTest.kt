@@ -48,7 +48,27 @@ class ReadingCycleTest {
         val sdf = SimpleDateFormat("yyyy-MM-dd", Locale.US)
         val date = sdf.parse("2026-10-05")!!
         val range = ReadingCycleCalculator.calculateCurrentCycleRange(ReadingCycleType.MONTHLY, referenceDate = date)
-        assertTrue(range.labelAr.contains("1 - 31"))
+        assertTrue(range.labelAr.contains("يوم 1"))
+        assertEquals(1, Calendar.getInstance().apply { timeInMillis = range.startMillis }.get(Calendar.DAY_OF_MONTH))
+        assertEquals(31, Calendar.getInstance().apply { timeInMillis = range.endMillis }.get(Calendar.DAY_OF_MONTH))
+    }
+
+    @Test
+    fun testMonthlyCycleDay30HandlesFebruaryAndLeapYear() {
+        val sdf = SimpleDateFormat("yyyy-MM-dd", Locale.US)
+        val february2026 = ReadingCycleCalculator.calculateCurrentCycleRange(
+            ReadingCycleType.MONTHLY,
+            monthlyStartDay = 30,
+            referenceDate = sdf.parse("2026-02-28")!!
+        )
+        assertEquals(28, Calendar.getInstance().apply { timeInMillis = february2026.startMillis }.get(Calendar.DAY_OF_MONTH))
+
+        val february2028 = ReadingCycleCalculator.calculateCurrentCycleRange(
+            ReadingCycleType.MONTHLY,
+            monthlyStartDay = 30,
+            referenceDate = sdf.parse("2028-02-29")!!
+        )
+        assertEquals(29, Calendar.getInstance().apply { timeInMillis = february2028.startMillis }.get(Calendar.DAY_OF_MONTH))
     }
 
     @Test
