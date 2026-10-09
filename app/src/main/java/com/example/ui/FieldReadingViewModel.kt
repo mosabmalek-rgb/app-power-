@@ -67,16 +67,19 @@ class FieldReadingViewModel(application: Application) : AndroidViewModel(applica
 
     private val _weeklyCycleStartDay = MutableStateFlow<Int>(repository.getWeeklyCycleStartDay())
     val weeklyCycleStartDay: StateFlow<Int> = _weeklyCycleStartDay.asStateFlow()
+    private val _monthlyStartDay = MutableStateFlow<Int>(repository.getMonthlyStartDay())
+    val monthlyStartDay: StateFlow<Int> = _monthlyStartDay.asStateFlow()
 
     val currentCycleRange: StateFlow<CycleDateRange> = combine(
         _readingCycleType,
-        _weeklyCycleStartDay
-    ) { type: ReadingCycleType, day: Int ->
-        ReadingCycleCalculator.calculateCurrentCycleRange(type, day)
+        _weeklyCycleStartDay,
+        _monthlyStartDay
+    ) { type: ReadingCycleType, day: Int, monthDay: Int ->
+        ReadingCycleCalculator.calculateCurrentCycleRange(type, day, monthDay)
     }.stateIn(
         viewModelScope,
         SharingStarted.Eagerly,
-        ReadingCycleCalculator.calculateCurrentCycleRange(_readingCycleType.value, _weeklyCycleStartDay.value)
+        ReadingCycleCalculator.calculateCurrentCycleRange(_readingCycleType.value, _weeklyCycleStartDay.value, _monthlyStartDay.value)
     )
 
     // Subscriber Cycle Filter (All, Unread this cycle, Read this cycle)
@@ -103,14 +106,14 @@ class FieldReadingViewModel(application: Application) : AndroidViewModel(applica
         _cycleFilter.value = filter
     }
 
-    fun setReadingCycleType(type: ReadingCycleType) {
-        repository.setReadingCycleType(type)
-        _readingCycleType.value = type
-    }
-
-    fun setWeeklyCycleStartDay(day: Int) {
-        repository.setWeeklyCycleStartDay(day)
-        _weeklyCycleStartDay.value = day
+    fun refreshReadingCycle() {
+        viewModelScope.launch {
+            repository.refreshReadingCycle().onSuccess { config ->
+                _readingCycleType.value = config.first
+                _weeklyCycleStartDay.value = config.second
+                _monthlyStartDay.value = config.third
+            }
+        }
     }
 
     // Unread & Read Subscribers in Current Cycle Counts
@@ -239,8 +242,10 @@ class FieldReadingViewModel(application: Application) : AndroidViewModel(applica
         // Auto-refresh/populate subscriber list if database is empty on start
         viewModelScope.launch {
             subscribers.first { true } // wait for first emission
-            if (subscribers.value.isEmpty()) {
+            if (repository.isLoggedIn() && subscribers.value.isEmpty()) {
                 repository.refreshSubscribers()
+            } else if (repository.isLoggedIn()) {
+                refreshReadingCycle()
             }
         }
 

@@ -24,6 +24,7 @@ import retrofit2.HttpException
 import java.io.File
 import java.io.IOException
 import java.text.SimpleDateFormat
+import java.util.Calendar
 import java.util.Date
 import java.util.Locale
 import java.util.TimeZone
@@ -69,16 +70,30 @@ class FieldReadingRepository(
         }
     }
 
-    fun setReadingCycleType(type: ReadingCycleType) {
-        prefs.edit().putString("reading_cycle_type", type.name).apply()
-    }
-
     fun getWeeklyCycleStartDay(): Int {
         return prefs.getInt("reading_cycle_weekly_day", java.util.Calendar.SATURDAY)
     }
 
-    fun setWeeklyCycleStartDay(day: Int) {
-        prefs.edit().putInt("reading_cycle_weekly_day", day).apply()
+    fun getMonthlyStartDay(): Int = prefs.getInt("reading_cycle_monthly_day", 1).let { if (it == 30) 30 else 1 }
+
+    suspend fun refreshReadingCycle(): Result<Triple<ReadingCycleType, Int, Int>> = runCatching {
+        ensureActiveAccessToken()
+        val profile = api.getProfile().user
+        val branchId = activeBranchId().takeIf { it in profile.branchIds } ?: profile.branchIds.firstOrNull()
+            ?: throw IllegalStateException("لا يوجد فرع ميداني فعال لهذا الحساب.")
+        prefs.edit().putLong("active_branch_id", branchId).apply()
+        val remote = api.getReadingCycle(branchId).cycle
+        val type = ReadingCycleType.values().firstOrNull { it.code.equals(remote.cycleType, ignoreCase = true) }
+            ?: throw IllegalStateException("إعداد دورة القراءة القادم من المنصة غير معروف.")
+        val weeklyDay = remote.weeklyStartDay.coerceIn(Calendar.SUNDAY, Calendar.SATURDAY)
+        val monthlyDay = if (remote.monthlyStartDay == 30) 30 else 1
+        prefs.edit()
+            .putString("reading_cycle_type", type.name)
+            .putInt("reading_cycle_weekly_day", weeklyDay)
+            .putInt("reading_cycle_monthly_day", monthlyDay)
+            .putString("reading_cycle_timezone", remote.timezone)
+            .apply()
+        Triple(type, weeklyDay, monthlyDay)
     }
 
     private suspend fun ensureActiveAccessToken() {
@@ -169,6 +184,7 @@ class FieldReadingRepository(
         val branchId = activeBranchId().takeIf { it in profile.branchIds } ?: profile.branchIds.firstOrNull()
             ?: throw IllegalStateException("لا توجد فروع ميدانية مسموحة لهذا الحساب.")
         prefs.edit().putLong("active_branch_id", branchId).apply()
+        refreshReadingCycle().getOrThrow()
         val allItems = buildList { var cursor: String? = null; do { val response = api.getSubscribers(branchId, 100, cursor); addAll(response.items); cursor = response.nextCursor } while (!cursor.isNullOrBlank()) }
         dao.clearAllSubscribers()
         dao.insertSubscribers(allItems.map { item ->

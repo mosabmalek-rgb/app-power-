@@ -7,7 +7,7 @@ enum class ReadingCycleType(val code: String, val titleAr: String, val descripti
     WEEKLY("WEEKLY", "كل أسبوع", "أسبوعياً مع تحديد يوم بدء الدورة"),
     EVERY_10_DAYS("EVERY_10_DAYS", "كل 10 أيام (1، 11، 21)", "تقسيم الشهر إلى 3 دورات: (1-10)، (11-20)، (21-نهاية الشهر)"),
     EVERY_15_DAYS("EVERY_15_DAYS", "كل 15 يوم (1، 16)", "تقسيم الشهر إلى دورتين: (1-15)، (16-نهاية الشهر)"),
-    MONTHLY("MONTHLY", "كل شهر (1 أو 30 الشهر \"عدا شهر فبراير 28\")", "دورة شهرية منتظمة تغطي دورة القراءات من بداية الشهر حتى نهايته")
+    MONTHLY("MONTHLY", "كل شهر", "تبدأ يوم 1 أو 30؛ وفي فبراير يبدأ يوم 28 أو 29 حسب السنة")
 }
 
 enum class SubscriberCycleFilter(val titleAr: String) {
@@ -42,6 +42,7 @@ object ReadingCycleCalculator {
     fun calculateCurrentCycleRange(
         type: ReadingCycleType,
         weeklyStartDay: Int = Calendar.SATURDAY,
+        monthlyStartDay: Int = 1,
         referenceDate: Date = Date()
     ): CycleDateRange {
         val cal = Calendar.getInstance()
@@ -173,36 +174,40 @@ object ReadingCycleCalculator {
             }
 
             ReadingCycleType.MONTHLY -> {
-                val maxDay = cal.getActualMaximum(Calendar.DAY_OF_MONTH)
-
-                val startCal = Calendar.getInstance().apply {
+                val configuredDay = if (monthlyStartDay == 30) 30 else 1
+                val currentStart = Calendar.getInstance().apply {
                     time = referenceDate
-                    set(Calendar.DAY_OF_MONTH, 1)
+                    val lastDay = getActualMaximum(Calendar.DAY_OF_MONTH)
+                    val effectiveDay = minOf(configuredDay, lastDay)
+                    set(Calendar.DAY_OF_MONTH, effectiveDay)
                     set(Calendar.HOUR_OF_DAY, 0)
                     set(Calendar.MINUTE, 0)
                     set(Calendar.SECOND, 0)
                     set(Calendar.MILLISECOND, 0)
                 }
-
-                val endCal = Calendar.getInstance().apply {
+                val startCal = if (!referenceDate.before(currentStart.time)) currentStart else Calendar.getInstance().apply {
                     time = referenceDate
-                    set(Calendar.DAY_OF_MONTH, maxDay)
-                    set(Calendar.HOUR_OF_DAY, 23)
-                    set(Calendar.MINUTE, 59)
-                    set(Calendar.SECOND, 59)
-                    set(Calendar.MILLISECOND, 999)
+                    add(Calendar.MONTH, -1)
+                    val lastDay = getActualMaximum(Calendar.DAY_OF_MONTH)
+                    set(Calendar.DAY_OF_MONTH, minOf(configuredDay, lastDay))
+                    set(Calendar.HOUR_OF_DAY, 0)
+                    set(Calendar.MINUTE, 0)
+                    set(Calendar.SECOND, 0)
+                    set(Calendar.MILLISECOND, 0)
                 }
-
-                val label = "دورة شهر ${monthYearFormat.format(referenceDate)} (1 - $maxDay)"
-                val shortText = "شهر ${monthYearFormat.format(referenceDate)}"
-
-                CycleDateRange(
-                    cycleType = type,
-                    startMillis = startCal.timeInMillis,
-                    endMillis = endCal.timeInMillis,
-                    labelAr = label,
-                    shortRangeText = shortText
-                )
+                val endCal = Calendar.getInstance().apply {
+                    time = startCal.time
+                    add(Calendar.MONTH, 1)
+                    set(Calendar.DAY_OF_MONTH, 1)
+                    set(Calendar.HOUR_OF_DAY, 0)
+                    set(Calendar.MINUTE, 0)
+                    set(Calendar.SECOND, 0)
+                    set(Calendar.MILLISECOND, 0)
+                    add(Calendar.MILLISECOND, -1)
+                }
+                val label = "دورة شهرية تبدأ يوم $configuredDay: ${displayFormat.format(startCal.time)} - ${fullDisplayFormat.format(endCal.time)}"
+                val shortText = "${displayFormat.format(startCal.time)} - ${displayFormat.format(endCal.time)}"
+                CycleDateRange(type, startCal.timeInMillis, endCal.timeInMillis, label, shortText)
             }
         }
     }
