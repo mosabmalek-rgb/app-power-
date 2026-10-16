@@ -6,6 +6,7 @@ import android.util.Base64
 import com.example.BuildConfig
 import com.example.data.FieldReadingDao
 import com.example.data.OfflineSyncPolicy
+import com.example.data.ReadingValuePrecision
 import com.example.data.PendingPaymentEntity
 import com.example.data.PendingReadingEntity
 import com.example.data.PendingSyncEventEntity
