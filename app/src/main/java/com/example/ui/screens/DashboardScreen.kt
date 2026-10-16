@@ -644,7 +644,7 @@ fun DashboardScreen(
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(horizontal = 16.dp)
-                    .offset(y = (-16).dp),
+                    .offset(y = 0.dp),
                 verticalArrangement = Arrangement.spacedBy(14.dp)
             ) {
                 // Recent Operations header
