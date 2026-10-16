@@ -48,6 +48,19 @@ class FieldReadingRepository(
     private val remoteConfig = RemoteConfigRepository(context)
     private var api: FieldReadingApi = MobileApiClient.create(sessionStore, remoteConfig.activeApiUrl())
     private val prefs = context.getSharedPreferences("field_reading_prefs", Context.MODE_PRIVATE)
+    private val profilePrefs = context.getSharedPreferences("field_profile_prefs", Context.MODE_PRIVATE)
+
+    fun getProfileImagePath(): String? {
+        val userId = prefs.getLong("profile_user_id", -1L)
+        if (userId <= 0L) return null
+        return profilePrefs.getString("profile_image_path_$userId", null)?.takeIf { java.io.File(it).isFile }
+    }
+
+    fun setProfileImagePath(path: String) {
+        val userId = prefs.getLong("profile_user_id", -1L)
+        require(userId > 0L) { "تعذر تحديد حساب المستخدم لحفظ صورة الملف." }
+        profilePrefs.edit().putString("profile_image_path_$userId", path).apply()
+    }
 
     val sessionRevokedEvents = sessionStore.sessionRevokedEvents
 
@@ -156,6 +169,7 @@ class FieldReadingRepository(
         sessionStore.save(session)
         prefs.edit().apply {
             putString("user_name", session.user.name ?: email.substringBefore("@"))
+            putLong("profile_user_id", session.user.id)
             putString("user_role", session.user.role)
             putString("company_name", "PowerHub")
             putLong("active_branch_id", session.user.branchIds.firstOrNull() ?: -1L)
