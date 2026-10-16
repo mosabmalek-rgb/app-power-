@@ -50,15 +50,32 @@ class FieldReadingRepository(
     private val prefs = context.getSharedPreferences("field_reading_prefs", Context.MODE_PRIVATE)
     private val profilePrefs = context.getSharedPreferences("field_profile_prefs", Context.MODE_PRIVATE)
 
+    private fun currentProfileUserId(): Long? {
+        prefs.getLong("profile_user_id", -1L).takeIf { it > 0L }?.let { return it }
+
+        // Existing installs may still have a valid access token but predate the
+        // local profile_user_id preference. The server's signed JWT carries the
+        // authenticated numeric user id in "sub"; use it only to key local UI data.
+        val encodedPayload = sessionStore.accessToken()?.split('.')?.getOrNull(1)
+            ?.takeIf { it.isNotBlank() } ?: return null
+        val payload = runCatching {
+            val bytes = android.util.Base64.decode(
+                encodedPayload,
+                android.util.Base64.URL_SAFE or android.util.Base64.NO_WRAP or android.util.Base64.NO_PADDING
+            )
+            JSONObject(String(bytes, Charsets.UTF_8)).optString("sub").toLongOrNull()
+        }.getOrNull()
+        return payload?.takeIf { it > 0L }
+    }
+
     fun getProfileImagePath(): String? {
-        val userId = prefs.getLong("profile_user_id", -1L)
-        if (userId <= 0L) return null
+        val userId = currentProfileUserId() ?: return null
         return profilePrefs.getString("profile_image_path_$userId", null)?.takeIf { java.io.File(it).isFile }
     }
 
     fun setProfileImagePath(path: String) {
-        val userId = prefs.getLong("profile_user_id", -1L)
-        require(userId > 0L) { "تعذر تحديد حساب المستخدم لحفظ صورة الملف." }
+        val userId = currentProfileUserId()
+            ?: throw IllegalStateException("تعذر تحديد حساب المستخدم لحفظ صورة الملف. تحقق من تسجيل الدخول ثم أعد المحاولة.")
         profilePrefs.edit().putString("profile_image_path_$userId", path).apply()
     }
 
