@@ -35,6 +35,7 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.example.data.ProfileImageUtils
 import com.example.data.ReadingCycleCalculator
 import com.example.data.ReadingCycleType
 import com.example.ui.FieldReadingViewModel
@@ -58,7 +59,7 @@ fun SettingsScreen(
 
     LaunchedEffect(profileImagePath) {
         profileBitmap = profileImagePath?.let { path ->
-            runCatching { BitmapFactory.decodeFile(path) }.getOrNull()
+            runCatching { ProfileImageUtils.decodeSampledFile(path) }.getOrNull()
         }
     }
 
@@ -67,27 +68,12 @@ fun SettingsScreen(
     ) { uri ->
         if (uri != null) {
             val savedPath = runCatching {
-                val profileDir = File(context.filesDir, "profile_images").apply { mkdirs() }
-                val tempFile = File(profileDir, "profile_${System.currentTimeMillis()}.tmp")
-                context.contentResolver.openInputStream(uri)?.use { input ->
-                    FileOutputStream(tempFile).use { output -> input.copyTo(output) }
-                } ?: error("تعذر قراءة الصورة المختارة.")
-                val bitmap = BitmapFactory.decodeFile(tempFile.absolutePath)
-                    ?: error("ملف الصورة غير صالح.")
-                val targetFile = File(profileDir, "profile_${System.currentTimeMillis()}.jpg")
-                FileOutputStream(targetFile).use { output ->
-                    if (!bitmap.compress(android.graphics.Bitmap.CompressFormat.JPEG, 88, output)) {
-                        error("تعذر حفظ صورة الملف.")
-                    }
-                }
-                bitmap.recycle()
-                tempFile.delete()
-                targetFile.absolutePath
+                ProfileImageUtils.saveFromUri(context, uri)
             }.getOrNull()
             if (savedPath != null) {
                 runCatching { viewModel.saveProfileImagePath(savedPath) }
                     .onSuccess {
-                        profileBitmap = BitmapFactory.decodeFile(savedPath)
+                        profileBitmap = ProfileImageUtils.decodeSampledFile(savedPath)
                         Toast.makeText(context, "تم حفظ صورة الملف بنجاح.", Toast.LENGTH_SHORT).show()
                     }
                     .onFailure {
