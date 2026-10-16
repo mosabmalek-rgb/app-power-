@@ -21,6 +21,7 @@ import com.example.data.api.MobileSyncEventRequest
 import com.example.data.api.RemoteConfigRepository
 import kotlinx.coroutines.flow.Flow
 import retrofit2.HttpException
+import org.json.JSONObject
 import java.io.File
 import java.io.IOException
 import java.text.SimpleDateFormat
@@ -94,12 +95,34 @@ class FieldReadingRepository(
         }
     }
 
-    private fun extractErrorMessage(e: HttpException): String {
+    private data class ServerApiError(val code: String?, val message: String?, val details: String?)
+
+    private fun parseServerApiError(e: HttpException): ServerApiError? {
         val body = runCatching { e.response()?.errorBody()?.string() }.getOrNull()
-        if (!body.isNullOrBlank()) {
-            val matched = Regex("\"message\"\\s*:\\s*\"([^\"]+)\"").find(body)?.groupValues?.get(1)
-            if (!matched.isNullOrBlank()) return matched
-        }
+            ?.takeIf { it.isNotBlank() } ?: return null
+        return runCatching {
+            val root = JSONObject(body)
+            val error = root.optJSONObject("error") ?: root
+            val code = error.optString("code").takeIf { it.isNotBlank() && it != "null" }
+            val message = error.optString("message").takeIf { it.isNotBlank() && it != "null" }
+            val details = error.optJSONObject("details")?.let { data ->
+                val issues = data.optJSONArray("issues")
+                if (issues != null && issues.length() > 0) {
+                    (0 until issues.length()).mapNotNull { index ->
+                        val issue = issues.optJSONObject(index) ?: return@mapNotNull null
+                        val path = issue.optString("path").takeIf { it.isNotBlank() }
+                        val issueMessage = issue.optString("message").takeIf { it.isNotBlank() }
+                        listOfNotNull(path, issueMessage).joinToString(": ").takeIf { it.isNotBlank() }
+                    }.joinToString("; ").takeIf { it.isNotBlank() }
+                } else null
+            }
+            ServerApiError(code, message, details)
+        }.getOrNull()
+    }
+
+    private fun extractErrorMessage(e: HttpException): String {
+        val serverError = parseServerApiError(e)
+        if (!serverError?.message.isNullOrBlank()) return serverError?.message.orEmpty()
         return when (e.code()) {
             401 -> "بيانات الدخول غير صحيحة. يرجى التحقق من البريد وكلمة المرور."
             403 -> "غير مصرح بالدخول (الحساب ليس لديه صلاحية محصل ميداني، أو اشتراك المنصة منتهي، أو الحساب غير مرتبط بفرع)."
@@ -208,7 +231,9 @@ class FieldReadingRepository(
                 } catch (error: Exception) {
                     val issue = classifySyncFailure(error)
                     dao.updateReadingSyncState(reading.localId, issue.status, reading.retryCount + 1, issue.message, System.currentTimeMillis())
-                    queueSyncEvent(branchId, "sync_error", issue.status, SyncSummary(0, if (issue.status == "needs_review") 0 else 1, if (issue.status == "needs_review") 1 else 0), if (issue.status == "needs_review") "READING_SYNC_REVIEW" else "READING_SYNC_RETRY", issue.message)
+                    val diagnosticCode = issue.errorCode
+                        ?: if (issue.status == "needs_review") "READING_SYNC_REVIEW" else "READING_SYNC_RETRY"
+                    queueSyncEvent(branchId, "sync_error", issue.status, SyncSummary(0, if (issue.status == "needs_review") 0 else 1, if (issue.status == "needs_review") 1 else 0), diagnosticCode, issue.message)
                     if (issue.status == "needs_review") needsReview++ else retryable++
                 }
             }
@@ -269,8 +294,18 @@ class FieldReadingRepository(
     private fun classifySyncFailure(error: Exception) = when (error) {
         is PermanentSyncException -> com.example.data.OfflineSyncIssue("needs_review", error.message ?: "تحتاج القراءة إلى مراجعة الفني.")
         is IOException -> OfflineSyncPolicy.forNetworkFailure()
-        is HttpException -> when (error.code()) {
-            else -> OfflineSyncPolicy.forHttpStatus(error.code())
+        is HttpException -> {
+            val fallback = OfflineSyncPolicy.forHttpStatus(error.code())
+            val serverError = parseServerApiError(error)
+            val code = serverError?.code ?: "HTTP_${error.code()}"
+            val message = serverError?.message?.takeIf { it.isNotBlank() } ?: fallback.message
+            val details = serverError?.details?.takeIf { it.isNotBlank() }
+            val diagnosticMessage = buildString {
+                append(message)
+                if (!details.isNullOrBlank()) append(" — ").append(details)
+                append(" [").append(code).append("]")
+            }.take(700)
+            com.example.data.OfflineSyncIssue(fallback.status, diagnosticMessage, code)
         }
         else -> com.example.data.OfflineSyncIssue("retryable", error.message?.take(300) ?: "تعذر إرسال القراءة؛ ستُعاد المحاولة تلقائياً.")
     }
