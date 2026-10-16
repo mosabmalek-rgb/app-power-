@@ -214,7 +214,8 @@ fun AddReadingScreen(
                             longitude = longitude ?: 0.0,
                             photoPath = capturedPhotoPath,
                             isReadingReset = isReadingReset,
-                            fieldVerified = true
+                            fieldVerified = true,
+                            readingValueText = currentReadingStr
                         ) { success, message ->
                             Toast.makeText(context, message, Toast.LENGTH_SHORT).show()
                             if (success) {
@@ -295,9 +296,9 @@ fun AddReadingScreen(
                         OutlinedTextField(value = "${sub.lastReading} ك.و/س", onValueChange = {}, label = { Text("آخر قراءة مسجلة (سابقة)") }, readOnly = true, leadingIcon = { Icon(Icons.Default.History, contentDescription = null) }, modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(10.dp))
                         OutlinedTextField(
                             value = currentReadingStr,
-                            onValueChange = { input -> if (input.isEmpty() || input.all { it.isDigit() || it == '.' }) currentReadingStr = input },
+                            onValueChange = { input -> if (input.isEmpty() || input.matches(Regex("\\d*(?:\\.\\d{0,2})?"))) currentReadingStr = input },
                             label = { Text("القراءة الحالية للمشترك") },
-                            placeholder = { Text("أدخل القيمة أو التقط صورة بالكاميرا") },
+                            placeholder = { Text("مثال: 128 أو 128.5 أو 128.52") },
                             leadingIcon = { Icon(Icons.Default.Speed, contentDescription = null) },
                             trailingIcon = {
                                 IconButton(
@@ -318,7 +319,7 @@ fun AddReadingScreen(
                                     )
                                 }
                             },
-                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
                             modifier = Modifier.fillMaxWidth().testTag("current_reading_input"),
                             shape = RoundedCornerShape(10.dp), singleLine = true
                         )
@@ -446,7 +447,7 @@ fun AddReadingScreen(
                                 Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                                     Text("الرقم المستخلص من الصورة", fontWeight = FontWeight.Bold, fontSize = 13.sp)
                                     if (extractedReading != null) {
-                                        OutlinedTextField(value = extractedReading!!, onValueChange = { extractedReading = it; readingApproved = false }, label = { Text("القراءة المستخلصة") }, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), modifier = Modifier.fillMaxWidth().testTag("ocr_reading_input"), singleLine = true)
+                                        OutlinedTextField(value = extractedReading!!, onValueChange = { input -> if (input.isEmpty() || input.matches(Regex("\\d*(?:\\.\\d{0,2})?"))) { extractedReading = input; readingApproved = false } }, label = { Text("القراءة المستخلصة") }, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal), modifier = Modifier.fillMaxWidth().testTag("ocr_reading_input"), singleLine = true)
                                         Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                                             OutlinedButton(onClick = { readingApproved = false; currentReadingStr = extractedReading.orEmpty() }, modifier = Modifier.weight(1f).testTag("change_ocr_reading_button")) { Text("تغيير القراءة") }
                                             Button(onClick = { currentReadingStr = extractedReading.orEmpty(); readingApproved = true }, modifier = Modifier.weight(1f).testTag("approve_ocr_reading_button")) { Text("اعتماد القراءة") }
@@ -481,6 +482,8 @@ fun AddReadingScreen(
                     val readingVal = currentReadingStr.toDoubleOrNull()
                     if (readingVal == null) {
                         Toast.makeText(context, "الرجاء إدخال رقم قراءة صحيح أولاً", Toast.LENGTH_SHORT).show()
+                    } else if (!currentReadingStr.matches(Regex("^\\d+(?:\\.\\d{1,2})?$"))) {
+                        Toast.makeText(context, "أدخل قراءة صحيحة بمنزلة عشرية واحدة أو منزلتين كحد أقصى.", Toast.LENGTH_SHORT).show()
                     } else if (capturedPhotoPath != null && !readingApproved) {
                         Toast.makeText(context, "راجع القراءة المستخلصة واضغط اعتماد القراءة أولاً.", Toast.LENGTH_SHORT).show()
                     } else if (!isReadingReset && readingVal < sub.lastReading) {
@@ -497,7 +500,8 @@ fun AddReadingScreen(
                             longitude = longitude ?: 0.0,
                             photoPath = capturedPhotoPath,
                             isReadingReset = isReadingReset,
-                            fieldVerified = true
+                            fieldVerified = true,
+                            readingValueText = currentReadingStr
                         ) { success, message ->
                             Toast.makeText(context, message, Toast.LENGTH_SHORT).show()
                             if (success) {

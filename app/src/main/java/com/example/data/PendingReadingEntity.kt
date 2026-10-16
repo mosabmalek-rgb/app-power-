@@ -20,5 +20,7 @@ data class PendingReadingEntity(
     val createdAt: Long = System.currentTimeMillis(),
     val retryCount: Int = 0,
     val lastError: String? = null,
-    val lastAttemptAt: Long? = null
+    val lastAttemptAt: Long? = null,
+    // Store the original valid text so inputs like 128.0 and 128.00 keep their entered precision.
+    val readingValueText: String? = null
 )

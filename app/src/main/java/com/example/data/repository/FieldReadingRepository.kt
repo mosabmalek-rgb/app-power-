@@ -6,6 +6,7 @@ import android.util.Base64
 import com.example.BuildConfig
 import com.example.data.FieldReadingDao
 import com.example.data.OfflineSyncPolicy
+import com.example.data.ReadingValuePrecision
 import com.example.data.PendingPaymentEntity
 import com.example.data.PendingReadingEntity
 import com.example.data.PendingSyncEventEntity
@@ -21,6 +22,7 @@ import com.example.data.api.MobileSyncEventRequest
 import com.example.data.api.RemoteConfigRepository
 import kotlinx.coroutines.flow.Flow
 import retrofit2.HttpException
+import org.json.JSONObject
 import java.io.File
 import java.io.IOException
 import java.text.SimpleDateFormat
@@ -94,12 +96,34 @@ class FieldReadingRepository(
         }
     }
 
-    private fun extractErrorMessage(e: HttpException): String {
+    private data class ServerApiError(val code: String?, val message: String?, val details: String?)
+
+    private fun parseServerApiError(e: HttpException): ServerApiError? {
         val body = runCatching { e.response()?.errorBody()?.string() }.getOrNull()
-        if (!body.isNullOrBlank()) {
-            val matched = Regex("\"message\"\\s*:\\s*\"([^\"]+)\"").find(body)?.groupValues?.get(1)
-            if (!matched.isNullOrBlank()) return matched
-        }
+            ?.takeIf { it.isNotBlank() } ?: return null
+        return runCatching {
+            val root = JSONObject(body)
+            val error = root.optJSONObject("error") ?: root
+            val code = error.optString("code").takeIf { it.isNotBlank() && it != "null" }
+            val message = error.optString("message").takeIf { it.isNotBlank() && it != "null" }
+            val details = error.optJSONObject("details")?.let { data ->
+                val issues = data.optJSONArray("issues")
+                if (issues != null && issues.length() > 0) {
+                    (0 until issues.length()).mapNotNull { index ->
+                        val issue = issues.optJSONObject(index) ?: return@mapNotNull null
+                        val path = issue.optString("path").takeIf { it.isNotBlank() }
+                        val issueMessage = issue.optString("message").takeIf { it.isNotBlank() }
+                        listOfNotNull(path, issueMessage).joinToString(": ").takeIf { it.isNotBlank() }
+                    }.joinToString("; ").takeIf { it.isNotBlank() }
+                } else null
+            }
+            ServerApiError(code, message, details)
+        }.getOrNull()
+    }
+
+    private fun extractErrorMessage(e: HttpException): String {
+        val serverError = parseServerApiError(e)
+        if (!serverError?.message.isNullOrBlank()) return serverError?.message.orEmpty()
         return when (e.code()) {
             401 -> "بيانات الدخول غير صحيحة. يرجى التحقق من البريد وكلمة المرور."
             403 -> "غير مصرح بالدخول (الحساب ليس لديه صلاحية محصل ميداني، أو اشتراك المنصة منتهي، أو الحساب غير مرتبط بفرع)."
@@ -145,15 +169,17 @@ class FieldReadingRepository(
     val pendingPaymentsFlow: Flow<List<PendingPaymentEntity>> = dao.getAllPendingPaymentsFlow()
     fun getSubscriberFlow(id: String): Flow<SubscriberEntity?> = dao.getSubscriberByIdFlow(id)
 
-    suspend fun saveReading(subscriberId: String, currentReading: Double, notes: String, latitude: Double, longitude: Double, photoPath: String?, isReadingReset: Boolean, fieldVerified: Boolean = true): Result<Unit> {
+    suspend fun saveReading(subscriberId: String, currentReading: Double, notes: String, latitude: Double, longitude: Double, photoPath: String?, isReadingReset: Boolean, fieldVerified: Boolean = true, readingValueText: String? = null): Result<Unit> {
         requireSubscriptionForOffline()
         val subscriber = dao.getSubscriberById(subscriberId) ?: return Result.failure(Exception("لم يتم العثور على بيانات هذا المشترك على الجهاز."))
+        val normalizedReadingText = ReadingValuePrecision.normalizeForSync(currentReading, readingValueText)
+            ?: return Result.failure(Exception("القراءة يجب أن تكون رقماً صحيحاً أو تحتوي على منزلة أو منزلتين عشريتين كحد أقصى."))
         if (!isReadingReset && currentReading < subscriber.lastReading) return Result.failure(Exception("القراءة الحالية يجب أن تكون أكبر من أو تساوي القراءة السابقة."))
         val existing = dao.getReadingsForSubscriber(subscriberId)
         if (existing.any { it.currentReading == currentReading }) return Result.failure(Exception("تم حفظ القراءة نفسها محلياً مسبقاً."))
         val today = currentDateTime().substringBefore(" ")
         if (existing.any { it.readingDate.startsWith(today) } && !isReadingReset) return Result.failure(Exception("توجد قراءة محلية لهذا المشترك اليوم."))
-        dao.insertPendingReading(PendingReadingEntity(subscriberId = subscriberId, currentReading = currentReading, readingDate = currentDateTime(), notes = notes, latitude = latitude, longitude = longitude, photoPath = photoPath, status = "pending", isReadingReset = isReadingReset, fieldVerified = fieldVerified))
+        dao.insertPendingReading(PendingReadingEntity(subscriberId = subscriberId, currentReading = currentReading, readingDate = currentDateTime(), notes = notes, latitude = latitude, longitude = longitude, photoPath = photoPath, status = "pending", isReadingReset = isReadingReset, fieldVerified = fieldVerified, readingValueText = normalizedReadingText))
         return Result.success(Unit)
     }
 
@@ -197,7 +223,8 @@ class FieldReadingRepository(
                 try {
                     dao.updateReadingSyncState(reading.localId, "syncing", reading.retryCount, null, System.currentTimeMillis())
                     val image = reading.photoPath?.let { loadImagePayload(it) ?: throw PermanentSyncException("تعذر العثور على صورة القراءة أو تجاوزت 5 ميغابايت.") }
-                    val response = api.createReading(MobileReadingRequest(reading.clientReferenceId, branchId, reading.subscriberId.toLong(), String.format(Locale.US, "%.3f", reading.currentReading), localDateToUtc(reading.readingDate), if (image == null) "manual" else "photo", reading.isReadingReset, reading.fieldVerified, reading.latitude.takeIf { it != 0.0 }, reading.longitude.takeIf { it != 0.0 }, image?.first, image?.second, reading.notes.ifBlank { null }))
+                    val response = api.createReading(MobileReadingRequest(reading.clientReferenceId, branchId, reading.subscriberId.toLong(), ReadingValuePrecision.normalizeForSync(reading.currentReading, reading.readingValueText)
+                        ?: throw PermanentSyncException("القراءة يجب أن تكون رقماً صحيحاً أو تحتوي على منزلة أو منزلتين عشريتين كحد أقصى."), localDateToUtc(reading.readingDate), if (image == null) "manual" else "photo", reading.isReadingReset, reading.fieldVerified, reading.latitude.takeIf { it != 0.0 }, reading.longitude.takeIf { it != 0.0 }, image?.first, image?.second, reading.notes.ifBlank { null }))
                     if (response.id > 0) { dao.updateReadingSyncState(reading.localId, "synced", reading.retryCount, null, System.currentTimeMillis()); synced++ }
                     else {
                         val message = "رفض الخادم تأكيد القراءة؛ ستُعاد المحاولة تلقائياً."
@@ -208,7 +235,9 @@ class FieldReadingRepository(
                 } catch (error: Exception) {
                     val issue = classifySyncFailure(error)
                     dao.updateReadingSyncState(reading.localId, issue.status, reading.retryCount + 1, issue.message, System.currentTimeMillis())
-                    queueSyncEvent(branchId, "sync_error", issue.status, SyncSummary(0, if (issue.status == "needs_review") 0 else 1, if (issue.status == "needs_review") 1 else 0), if (issue.status == "needs_review") "READING_SYNC_REVIEW" else "READING_SYNC_RETRY", issue.message)
+                    val diagnosticCode = issue.errorCode
+                        ?: if (issue.status == "needs_review") "READING_SYNC_REVIEW" else "READING_SYNC_RETRY"
+                    queueSyncEvent(branchId, "sync_error", issue.status, SyncSummary(0, if (issue.status == "needs_review") 0 else 1, if (issue.status == "needs_review") 1 else 0), diagnosticCode, issue.message)
                     if (issue.status == "needs_review") needsReview++ else retryable++
                 }
             }
@@ -260,6 +289,7 @@ class FieldReadingRepository(
 
     private fun deviceLabel(): String = "${Build.MANUFACTURER} ${Build.MODEL}".trim().take(160).ifBlank { "Android Field Reader" }
 
+
     private class PermanentSyncException(message: String) : IllegalStateException(message)
 
     private suspend fun logoutRemote() { runCatching { if (sessionStore.isLoggedIn()) { ensureActiveAccessToken(); api.logout() } } }
@@ -269,8 +299,18 @@ class FieldReadingRepository(
     private fun classifySyncFailure(error: Exception) = when (error) {
         is PermanentSyncException -> com.example.data.OfflineSyncIssue("needs_review", error.message ?: "تحتاج القراءة إلى مراجعة الفني.")
         is IOException -> OfflineSyncPolicy.forNetworkFailure()
-        is HttpException -> when (error.code()) {
-            else -> OfflineSyncPolicy.forHttpStatus(error.code())
+        is HttpException -> {
+            val fallback = OfflineSyncPolicy.forHttpStatus(error.code())
+            val serverError = parseServerApiError(error)
+            val code = serverError?.code ?: "HTTP_${error.code()}"
+            val message = serverError?.message?.takeIf { it.isNotBlank() } ?: fallback.message
+            val details = serverError?.details?.takeIf { it.isNotBlank() }
+            val diagnosticMessage = buildString {
+                append(message)
+                if (!details.isNullOrBlank()) append(" — ").append(details)
+                append(" [").append(code).append("]")
+            }.take(700)
+            com.example.data.OfflineSyncIssue(fallback.status, diagnosticMessage, code)
         }
         else -> com.example.data.OfflineSyncIssue("retryable", error.message?.take(300) ?: "تعذر إرسال القراءة؛ ستُعاد المحاولة تلقائياً.")
     }
