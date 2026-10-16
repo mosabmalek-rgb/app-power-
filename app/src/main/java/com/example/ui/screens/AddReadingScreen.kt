@@ -149,8 +149,8 @@ fun AddReadingScreen(
                 ocrMessage = message
                 if (value != null) {
                     currentReadingStr = value
-                    readingApproved = true
-                    Toast.makeText(context, "تم استخراج القراءة $value تلقائياً. راجع الرقم قبل الحفظ.", Toast.LENGTH_LONG).show()
+                    readingApproved = false
+                    Toast.makeText(context, "تم استخراج القراءة $value. راجع الرقم واضغط «اعتماد القراءة» قبل الحفظ.", Toast.LENGTH_LONG).show()
                 } else {
                     Toast.makeText(context, message ?: "تعذر استخراج الرقم؛ يمكنك إدخاله يدوياً.", Toast.LENGTH_LONG).show()
                 }
@@ -507,6 +507,8 @@ fun AddReadingScreen(
                         Toast.makeText(context, "أدخل قراءة صحيحة بمنزلة عشرية واحدة أو منزلتين كحد أقصى.", Toast.LENGTH_SHORT).show()
                     } else if (isOcrProcessing) {
                         Toast.makeText(context, "انتظر حتى ينتهي استخراج رقم العداد.", Toast.LENGTH_SHORT).show()
+                    } else if (extractedReading != null && !readingApproved) {
+                        Toast.makeText(context, "راجع الرقم المستخلص واضغط «اعتماد القراءة» أو أدخل القراءة يدوياً قبل الحفظ.", Toast.LENGTH_LONG).show()
                     } else if (!isReadingReset && readingVal < sub.lastReading) {
                         Toast.makeText(context, "القراءة أقل من السابقة! قم بتفعيل إعادة الضبط إذا تم تصفير العداد.", Toast.LENGTH_LONG).show()
                     } else if (!isReadingReset && consumption > 500.0 && consumption > sub.lastReading * 3) {
