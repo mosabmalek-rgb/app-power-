@@ -44,7 +44,7 @@ jobs:
         uses: gradle/actions/setup-gradle@v4
 
       - name: Run unit tests and assemble debug APK
-        run: ./gradlew testDebugUnitTest assembleDebug --no-daemon --no-configuration-cache -PPOWERHUB_API_BASE_URL="$POWERHUB_API_BASE_URL"
+        run: bash ./gradlew testDebugUnitTest assembleDebug --no-daemon --no-configuration-cache -PPOWERHUB_API_BASE_URL="$POWERHUB_API_BASE_URL"
 
       - name: Upload debug APK
         uses: actions/upload-artifact@v4
