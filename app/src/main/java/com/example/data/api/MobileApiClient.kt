@@ -64,8 +64,12 @@ class MobileSessionStore(context: Context) {
     private fun hashPin(pin: String): String = MessageDigest.getInstance("SHA-256")
         .digest(pin.toByteArray(Charsets.UTF_8)).joinToString("") { "%02x".format(it) }
 
-    private val _sessionRevokedEvents = MutableSharedFlow<Unit>(extraBufferCapacity = 1)
-    val sessionRevokedEvents: SharedFlow<Unit> = _sessionRevokedEvents.asSharedFlow()
+    val sessionRevokedEvents: SharedFlow<Unit> get() = revokedEvents.asSharedFlow()
+
+    private companion object {
+        // Shared across repository/WorkManager instances in the same app process.
+        private val revokedEvents = MutableSharedFlow<Unit>(extraBufferCapacity = 1)
+    }
 
     fun save(session: MobileSessionResponse) {
         prefs.edit()
@@ -108,7 +112,7 @@ class MobileSessionStore(context: Context) {
             .remove("refresh_token")
             .putLong("access_expires_at", 0L)
             .apply()
-        if (wasLoggedIn) _sessionRevokedEvents.tryEmit(Unit)
+        if (wasLoggedIn) revokedEvents.tryEmit(Unit)
     }
 
     fun clear() = prefs.edit().clear().apply()
