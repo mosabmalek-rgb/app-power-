@@ -83,12 +83,14 @@ class FieldReadingRepository(
         prefs.edit().putInt("reading_cycle_weekly_day", day).apply()
     }
 
-    suspend fun getCycleSyncedReadingCount(fromMillis: Long, toMillis: Long): Result<Int> = runCatching {
+    suspend fun getCycleSyncedReadingCount(fromMillis: Long, toMillisInclusive: Long): Result<Int> = runCatching {
         ensureActiveAccessToken()
         val branchId = activeBranchId()
         if (branchId <= 0L) throw IllegalStateException("لا يوجد فرع ميداني محدد.")
         fun iso(millis: Long): String = java.time.Instant.ofEpochMilli(millis).toString()
-        api.getCycleSyncStats(branchId, iso(fromMillis), iso(toMillis)).syncedReadingCount
+        // CycleDateRange.endMillis is inclusive; the API window is [from, to).
+        val exclusiveEnd = Math.addExact(toMillisInclusive, 1L)
+        api.getCycleSyncStats(branchId, iso(fromMillis), iso(exclusiveEnd)).syncedReadingCount
     }
 
     private suspend fun ensureActiveAccessToken() {
