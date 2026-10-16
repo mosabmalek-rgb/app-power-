@@ -413,6 +413,32 @@ class FieldReadingViewModel(application: Application) : AndroidViewModel(applica
         }
     }
 
+    fun refreshCurrentCycleData() {
+        if (!_isLoggedIn.value || _isSyncing.value) return
+        val range = currentCycleRange.value
+        viewModelScope.launch {
+            // Run both refreshes sequentially to avoid concurrent token refresh races.
+            _isSyncing.value = true
+            _syncStatusMessage.value = "جاري تحديث بيانات دورة القراءات..."
+            val subscribersResult = repository.refreshSubscribers()
+            _cycleSyncStatsError.value = null
+            val statsResult = repository.getCycleSyncedReadingCount(range.startMillis, range.endMillis)
+            if (statsResult.isSuccess) {
+                _serverSyncedCycleCount.value = statsResult.getOrNull()
+            } else {
+                _serverSyncedCycleCount.value = null
+                _cycleSyncStatsError.value = statsResult.exceptionOrNull()?.message
+                    ?: "تعذر تحميل إحصاءات مزامنة الدورة من الخادم."
+            }
+            _isSyncing.value = false
+            _syncStatusMessage.value = when {
+                subscribersResult.isFailure -> "تعذر تحديث قائمة المشتركين: ${subscribersResult.exceptionOrNull()?.message}"
+                statsResult.isFailure -> "تم تحديث المشتركين، لكن تعذر تحديث إحصاءات المزامنة."
+                else -> "تم تحديث بيانات الدورة من الخادم."
+            }
+        }
+    }
+
     fun syncAllData() {
         if (_isSyncing.value) return
         
