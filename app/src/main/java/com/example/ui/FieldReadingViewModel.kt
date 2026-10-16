@@ -391,6 +391,54 @@ class FieldReadingViewModel(application: Application) : AndroidViewModel(applica
         }
     }
 
+    private val _serverSyncedCycleCount = MutableStateFlow<Int?>(null)
+    val serverSyncedCycleCount: StateFlow<Int?> = _serverSyncedCycleCount.asStateFlow()
+
+    private val _cycleSyncStatsError = MutableStateFlow<String?>(null)
+    val cycleSyncStatsError: StateFlow<String?> = _cycleSyncStatsError.asStateFlow()
+
+    fun refreshCycleSyncStats() {
+        if (!_isLoggedIn.value) return
+        val range = currentCycleRange.value
+        viewModelScope.launch {
+            _cycleSyncStatsError.value = null
+            val result = repository.getCycleSyncedReadingCount(range.startMillis, range.endMillis)
+            if (result.isSuccess) {
+                _serverSyncedCycleCount.value = result.getOrNull()
+            } else {
+                _serverSyncedCycleCount.value = null
+                _cycleSyncStatsError.value = result.exceptionOrNull()?.message
+                    ?: "تعذر تحميل إحصاءات مزامنة الدورة من الخادم."
+            }
+        }
+    }
+
+    fun refreshCurrentCycleData() {
+        if (!_isLoggedIn.value || _isSyncing.value) return
+        val range = currentCycleRange.value
+        viewModelScope.launch {
+            // Run both refreshes sequentially to avoid concurrent token refresh races.
+            _isSyncing.value = true
+            _syncStatusMessage.value = "جاري تحديث بيانات دورة القراءات..."
+            val subscribersResult = repository.refreshSubscribers()
+            _cycleSyncStatsError.value = null
+            val statsResult = repository.getCycleSyncedReadingCount(range.startMillis, range.endMillis)
+            if (statsResult.isSuccess) {
+                _serverSyncedCycleCount.value = statsResult.getOrNull()
+            } else {
+                _serverSyncedCycleCount.value = null
+                _cycleSyncStatsError.value = statsResult.exceptionOrNull()?.message
+                    ?: "تعذر تحميل إحصاءات مزامنة الدورة من الخادم."
+            }
+            _isSyncing.value = false
+            _syncStatusMessage.value = when {
+                subscribersResult.isFailure -> "تعذر تحديث قائمة المشتركين: ${subscribersResult.exceptionOrNull()?.message}"
+                statsResult.isFailure -> "تم تحديث المشتركين، لكن تعذر تحديث إحصاءات المزامنة."
+                else -> "تم تحديث بيانات الدورة من الخادم."
+            }
+        }
+    }
+
     fun syncAllData() {
         if (_isSyncing.value) return
         
@@ -407,6 +455,7 @@ class FieldReadingViewModel(application: Application) : AndroidViewModel(applica
             _isSyncing.value = false
             if (result.isSuccess) {
                 _syncStatusMessage.value = result.getOrNull()?.message() ?: "اكتملت المزامنة بنجاح"
+                refreshCycleSyncStats()
             } else {
                 _syncStatusMessage.value = "فشلت المزامنة: ${result.exceptionOrNull()?.message}"
             }

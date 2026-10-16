@@ -79,6 +79,9 @@ fun DashboardScreen(
                 color = Color.White,
                 shadowElevation = 8.dp
             ) {
+                // Keep the bar background behind the system navigation area,
+                // while reserving that inset below the tappable tab controls.
+                Column(modifier = Modifier.fillMaxWidth()) {
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -237,6 +240,8 @@ fun DashboardScreen(
                         )
                     }
                 }
+                    Spacer(modifier = Modifier.windowInsetsBottomHeight(WindowInsets.navigationBars))
+                }
             }
         }
     ) { innerPadding ->
@@ -246,6 +251,7 @@ fun DashboardScreen(
                 innerPadding = innerPadding,
                 viewModel = viewModel,
                 onNavigateToSubscribers = onNavigateToSubscribers,
+                onNavigateToSync = onNavigateToSync,
                 onNavigateToSettings = onNavigateToSettings
             )
         } else {
@@ -763,6 +769,7 @@ fun ReadingCycleTabContent(
     innerPadding: PaddingValues,
     viewModel: FieldReadingViewModel,
     onNavigateToSubscribers: () -> Unit,
+    onNavigateToSync: () -> Unit,
     onNavigateToSettings: () -> Unit
 ) {
     val subscribers by viewModel.subscribers.collectAsState()
@@ -770,6 +777,27 @@ fun ReadingCycleTabContent(
     val unreadThisCycleCount by viewModel.unreadSubscribersCount.collectAsState()
     val readThisCycleCount by viewModel.readSubscribersCount.collectAsState()
     val currentCycleRange by viewModel.currentCycleRange.collectAsState()
+    val syncedThisCycleCount by viewModel.serverSyncedCycleCount.collectAsState()
+    val cycleSyncStatsError by viewModel.cycleSyncStatsError.collectAsState()
+
+    LaunchedEffect(currentCycleRange.startMillis, currentCycleRange.endMillis) {
+        // Platform-entered readings and the confirmed count refresh sequentially
+        // when this cycle tab is opened or the active cycle changes.
+        viewModel.refreshCurrentCycleData()
+    }
+
+    val readingsNeedingSync = remember(pendingReadings, currentCycleRange) {
+        val parser = java.text.SimpleDateFormat("yyyy-MM-dd HH:mm", java.util.Locale.US).apply {
+            timeZone = java.util.TimeZone.getDefault()
+        }
+        pendingReadings.count { reading ->
+            val timestamp = runCatching { parser.parse(reading.readingDate)?.time }.getOrNull()
+            timestamp != null &&
+                timestamp >= currentCycleRange.startMillis &&
+                timestamp < currentCycleRange.endMillis &&
+                reading.status in setOf("pending", "retryable", "syncing", "needs_review")
+        }
+    }
 
     var selectedFilter by remember { mutableStateOf(SubscriberCycleFilter.UNREAD_THIS_CYCLE) }
     var searchQuery by remember { mutableStateOf("") }
@@ -872,6 +900,81 @@ fun ReadingCycleTabContent(
             contentPadding = PaddingValues(16.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
+            // Field sync status summary: server-confirmed vs locally queued readings.
+            item {
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(16.dp),
+                    colors = CardDefaults.cardColors(containerColor = Color.White),
+                    border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFFCBD5E1)),
+                    elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
+                ) {
+                    Column(
+                        modifier = Modifier.padding(14.dp),
+                        verticalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Icon(Icons.Default.Sync, contentDescription = null, tint = Color(0xFF004A77))
+                            Spacer(Modifier.width(8.dp))
+                            Text("مزامنة قراءات الدورة", fontSize = 14.sp, fontWeight = FontWeight.Bold, color = Color(0xFF0F172A))
+                        }
+                        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                            Surface(
+                                modifier = Modifier.weight(1f),
+                                shape = RoundedCornerShape(12.dp),
+                                color = Color(0xFFF0FDF4),
+                                border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFFBBF7D0))
+                            ) {
+                                Column(Modifier.padding(12.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                                    Text("قراءات متزامنة", fontSize = 11.sp, color = Color(0xFF166534))
+                                    Text(syncedThisCycleCount?.toString() ?: "—", fontSize = 22.sp, fontWeight = FontWeight.Bold, color = Color(0xFF166534))
+                                    Text(
+                                        when {
+                                            syncedThisCycleCount != null -> "قراءات ميدانية مؤكدة"
+                                            cycleSyncStatsError != null -> "تعذر تحميل العدد"
+                                            else -> "جارٍ تحميل العدد..."
+                                        },
+                                        fontSize = 10.sp,
+                                        color = Color(0xFF166534)
+                                    )
+                                }
+                            }
+                            Surface(
+                                modifier = Modifier.weight(1f),
+                                shape = RoundedCornerShape(12.dp),
+                                color = if (readingsNeedingSync == 0) Color(0xFFF8FAFC) else Color(0xFFFFF7ED),
+                                border = androidx.compose.foundation.BorderStroke(1.dp, if (readingsNeedingSync == 0) Color(0xFFE2E8F0) else Color(0xFFFED7AA))
+                            ) {
+                                Column(Modifier.padding(12.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                                    Text("تحتاج مزامنة", fontSize = 11.sp, color = if (readingsNeedingSync == 0) Color(0xFF64748B) else Color(0xFF9A3412))
+                                    Text("$readingsNeedingSync", fontSize = 22.sp, fontWeight = FontWeight.Bold, color = if (readingsNeedingSync == 0) Color(0xFF64748B) else Color(0xFF9A3412))
+                                    Text("محفوظة على الجهاز", fontSize = 10.sp, color = if (readingsNeedingSync == 0) Color(0xFF64748B) else Color(0xFF9A3412))
+                                }
+                            }
+                        }
+                        if (cycleSyncStatsError != null) {
+                            Text(
+                                text = "تعذر تحديث عدد القراءات المتزامنة من الخادم. تحقق من الاتصال ثم أعد فتح البطاقة.",
+                                fontSize = 11.sp,
+                                color = Color(0xFFB91C1C)
+                            )
+                        }
+                        Button(
+                            onClick = {
+                                viewModel.refreshCycleSyncStats()
+                                onNavigateToSync()
+                            },
+                            modifier = Modifier.fillMaxWidth(),
+                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF004A77))
+                        ) {
+                            Icon(Icons.Default.Sync, contentDescription = null)
+                            Spacer(Modifier.width(8.dp))
+                            Text(if (readingsNeedingSync > 0) "فتح المزامنة ومراجعة القراءات" else "فتح تفاصيل المزامنة")
+                        }
+                    }
+                }
+            }
+
             // Main Cycle Card
             item {
                 Card(
