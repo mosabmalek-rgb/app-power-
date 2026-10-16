@@ -49,6 +49,9 @@ fun SubscribersScreen(
 
     val context = LocalContext.current
     LaunchedEffect(Unit) {
+        // Refresh server-authoritative subscriber readings whenever this screen opens,
+        // so readings entered on the platform appear without requiring a manual refresh.
+        viewModel.refreshSubscribers()
         if (ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED) {
             val fusedLocation = LocationServices.getFusedLocationProviderClient(context)
             fusedLocation.lastLocation.addOnSuccessListener { loc ->
