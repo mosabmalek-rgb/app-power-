@@ -140,7 +140,7 @@ object MeterReadingOcr {
                     val lineContent = line.trim().replace(Regex("[^\\d.]"), "")
                     val numericOnlyLine = lineContent == value
                     val integerDigits = value.substringBefore('.').length
-                    val score = integerDigits * 10 + if (numericOnlyLine) 12 else 0 + if (decimals > 0) 2 else 0
+                    val score = integerDigits * 10 + (if (numericOnlyLine) 12 else 0) + (if (decimals > 0) 2 else 0)
                     Candidate(value, score)
                 }
         }.distinctBy { it.value }.toList()
