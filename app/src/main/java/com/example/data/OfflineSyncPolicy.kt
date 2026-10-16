@@ -1,6 +1,6 @@
 package com.example.data
 
-data class OfflineSyncIssue(val status: String, val message: String)
+data class OfflineSyncIssue(val status: String, val message: String, val errorCode: String? = null)
 
 object OfflineSyncPolicy {
     fun forHttpStatus(statusCode: Int): OfflineSyncIssue = when (statusCode) {
