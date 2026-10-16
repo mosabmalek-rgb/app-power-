@@ -153,9 +153,10 @@ fun SettingsScreen(
                             },
                         contentAlignment = Alignment.Center
                     ) {
-                        if (profileBitmap != null) {
+                        val visibleProfileBitmap = profileBitmap
+                        if (visibleProfileBitmap != null) {
                             Image(
-                                bitmap = profileBitmap.asImageBitmap(),
+                                bitmap = visibleProfileBitmap.asImageBitmap(),
                                 contentDescription = "صورة الملف",
                                 modifier = Modifier
                                     .fillMaxSize()
