@@ -47,6 +47,9 @@ class FieldReadingViewModel(application: Application) : AndroidViewModel(applica
     private val _loginError = MutableStateFlow<String?>(null)
     val loginError: StateFlow<String?> = _loginError.asStateFlow()
 
+    private val _sessionRevokedEvents = MutableSharedFlow<Unit>(extraBufferCapacity = 1)
+    val sessionRevokedEvents: SharedFlow<Unit> = _sessionRevokedEvents.asSharedFlow()
+
     // Database content flows
     val subscribers: StateFlow<List<SubscriberEntity>> = repository.subscribersFlow
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
@@ -252,6 +255,18 @@ class FieldReadingViewModel(application: Application) : AndroidViewModel(applica
     }
 
     init {
+        // Revoke UI access when the server confirms this device's session is no longer valid.
+        // This event is raised only after the access token receives 401 and refresh is rejected;
+        // network failures do not log the technician out.
+        viewModelScope.launch {
+            repository.sessionRevokedEvents.collect {
+                _isLoggedIn.value = false
+                _mustChangePassword.value = false
+                _loginError.value = "تم إنهاء جلسة هذا الجهاز أو انتهت صلاحيتها، وقد يكون الحساب قد سُجّل الدخول من جهاز آخر. القراءات غير المتزامنة ما زالت محفوظة محلياً؛ سجّل الدخول مجدداً لمتابعة المزامنة."
+                _sessionRevokedEvents.emit(Unit)
+            }
+        }
+
         // Auto-refresh/populate subscriber list if database is empty on start
         viewModelScope.launch {
             subscribers.first { true } // wait for first emission
