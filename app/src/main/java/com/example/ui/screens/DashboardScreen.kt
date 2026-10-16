@@ -58,6 +58,7 @@ fun DashboardScreen(
     val readThisCycleCount by viewModel.readSubscribersCount.collectAsState()
     val currentCycleRange by viewModel.currentCycleRange.collectAsState()
     val isSyncing by viewModel.isSyncing.collectAsState()
+    val isOnline by viewModel.isOnline.collectAsState()
     val syncProgress by viewModel.syncProgress.collectAsState()
     val syncStatusMessage by viewModel.syncStatusMessage.collectAsState()
 
@@ -328,10 +329,30 @@ fun DashboardScreen(
                         }
 
                         // Connectivity badge matching tailwind style
-                        val statusBg = if (isSyncing) Color(0x332196F3) else if (totalPending > 0) Color(0x33FF9800) else Color(0x334CAF50)
-                        val statusText = if (isSyncing) "جاري المزامنة..." else if (totalPending > 0) "معلق محلياً ($totalPending)" else "متصل ومزامن"
-                        val statusBorder = if (isSyncing) Color(0x662196F3) else if (totalPending > 0) Color(0x66FF9800) else Color(0x664CAF50)
-                        val statusDotColor = if (isSyncing) Color(0xFF2196F3) else if (totalPending > 0) Color(0xFFFF9800) else Color(0xFF4CAF50)
+                        val statusBg = when {
+                            !isOnline -> Color(0x33F44336)
+                            isSyncing -> Color(0x332196F3)
+                            totalPending > 0 -> Color(0x33FF9800)
+                            else -> Color(0x334CAF50)
+                        }
+                        val statusText = when {
+                            !isOnline -> "غير متصل"
+                            isSyncing -> "جاري المزامنة..."
+                            totalPending > 0 -> "متصل — معلّق محلياً ($totalPending)"
+                            else -> "متصل ومزامن"
+                        }
+                        val statusBorder = when {
+                            !isOnline -> Color(0x66F44336)
+                            isSyncing -> Color(0x662196F3)
+                            totalPending > 0 -> Color(0x66FF9800)
+                            else -> Color(0x664CAF50)
+                        }
+                        val statusDotColor = when {
+                            !isOnline -> Color(0xFFF44336)
+                            isSyncing -> Color(0xFF2196F3)
+                            totalPending > 0 -> Color(0xFFFF9800)
+                            else -> Color(0xFF4CAF50)
+                        }
 
                         Row(
                             verticalAlignment = Alignment.CenterVertically,
@@ -623,7 +644,7 @@ fun DashboardScreen(
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(horizontal = 16.dp)
-                    .offset(y = (-16).dp),
+                    .offset(y = 0.dp),
                 verticalArrangement = Arrangement.spacedBy(14.dp)
             ) {
                 // Recent Operations header
