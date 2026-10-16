@@ -777,11 +777,16 @@ fun ReadingCycleTabContent(
     val unreadThisCycleCount by viewModel.unreadSubscribersCount.collectAsState()
     val readThisCycleCount by viewModel.readSubscribersCount.collectAsState()
     val currentCycleRange by viewModel.currentCycleRange.collectAsState()
+    val syncedThisCycleCount by viewModel.serverSyncedCycleCount.collectAsState()
+    val cycleSyncStatsError by viewModel.cycleSyncStatsError.collectAsState()
 
-    // Count server-confirmed cycle readings separately from local unsynced work.
-    val syncedThisCycleCount = remember(subscribers, currentCycleRange) {
-        subscribers.count { ReadingCycleCalculator.isSubscriberReadInCycle(it, emptyList(), currentCycleRange) }
+    LaunchedEffect(currentCycleRange.startMillis, currentCycleRange.endMillis) {
+        // Platform-entered readings and the confirmed count both refresh when this
+        // cycle tab is opened or the active cycle changes.
+        viewModel.refreshSubscribers()
+        viewModel.refreshCycleSyncStats()
     }
+
     val readingsNeedingSync = remember(pendingReadings, currentCycleRange) {
         val parser = java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss", java.util.Locale.US).apply {
             timeZone = java.util.TimeZone.getDefault()
@@ -923,8 +928,16 @@ fun ReadingCycleTabContent(
                             ) {
                                 Column(Modifier.padding(12.dp), horizontalAlignment = Alignment.CenterHorizontally) {
                                     Text("قراءات متزامنة", fontSize = 11.sp, color = Color(0xFF166534))
-                                    Text("$syncedThisCycleCount", fontSize = 22.sp, fontWeight = FontWeight.Bold, color = Color(0xFF166534))
-                                    Text("مؤكدة من الخادم", fontSize = 10.sp, color = Color(0xFF166534))
+                                    Text(syncedThisCycleCount?.toString() ?: "—", fontSize = 22.sp, fontWeight = FontWeight.Bold, color = Color(0xFF166534))
+                                    Text(
+                                        when {
+                                            syncedThisCycleCount != null -> "قراءات ميدانية مؤكدة"
+                                            cycleSyncStatsError != null -> "تعذر تحميل العدد"
+                                            else -> "جارٍ تحميل العدد..."
+                                        },
+                                        fontSize = 10.sp,
+                                        color = Color(0xFF166534)
+                                    )
                                 }
                             }
                             Surface(
@@ -940,8 +953,18 @@ fun ReadingCycleTabContent(
                                 }
                             }
                         }
+                        if (cycleSyncStatsError != null) {
+                            Text(
+                                text = "تعذر تحديث عدد القراءات المتزامنة من الخادم. تحقق من الاتصال ثم أعد فتح البطاقة.",
+                                fontSize = 11.sp,
+                                color = Color(0xFFB91C1C)
+                            )
+                        }
                         Button(
-                            onClick = onNavigateToSync,
+                            onClick = {
+                                viewModel.refreshCycleSyncStats()
+                                onNavigateToSync()
+                            },
                             modifier = Modifier.fillMaxWidth(),
                             colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF004A77))
                         ) {
