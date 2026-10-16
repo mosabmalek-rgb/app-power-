@@ -79,6 +79,9 @@ fun DashboardScreen(
                 color = Color.White,
                 shadowElevation = 8.dp
             ) {
+                // Keep the bar background behind the system navigation area,
+                // while reserving that inset below the tappable tab controls.
+                Column(modifier = Modifier.fillMaxWidth()) {
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -236,6 +239,8 @@ fun DashboardScreen(
                             color = Color.Gray
                         )
                     }
+                }
+                    Spacer(modifier = Modifier.windowInsetsBottomHeight(WindowInsets.navigationBars))
                 }
             }
         }
