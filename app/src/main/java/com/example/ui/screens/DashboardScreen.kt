@@ -781,10 +781,9 @@ fun ReadingCycleTabContent(
     val cycleSyncStatsError by viewModel.cycleSyncStatsError.collectAsState()
 
     LaunchedEffect(currentCycleRange.startMillis, currentCycleRange.endMillis) {
-        // Platform-entered readings and the confirmed count both refresh when this
-        // cycle tab is opened or the active cycle changes.
-        viewModel.refreshSubscribers()
-        viewModel.refreshCycleSyncStats()
+        // Platform-entered readings and the confirmed count refresh sequentially
+        // when this cycle tab is opened or the active cycle changes.
+        viewModel.refreshCurrentCycleData()
     }
 
     val readingsNeedingSync = remember(pendingReadings, currentCycleRange) {
