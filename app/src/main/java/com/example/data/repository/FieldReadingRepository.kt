@@ -49,6 +49,8 @@ class FieldReadingRepository(
     private var api: FieldReadingApi = MobileApiClient.create(sessionStore, remoteConfig.activeApiUrl())
     private val prefs = context.getSharedPreferences("field_reading_prefs", Context.MODE_PRIVATE)
 
+    val sessionRevokedEvents = sessionStore.sessionRevokedEvents
+
     fun isLoggedIn(): Boolean = sessionStore.isLoggedIn()
     fun mustChangePassword(): Boolean = prefs.getBoolean("must_change_password", false)
     fun isSubscriptionValidOffline(): Boolean = sessionStore.subscriptionAllowsOfflineNow()
