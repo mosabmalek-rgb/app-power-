@@ -242,7 +242,13 @@ class FieldReadingRepository(
                 }
             }
             onProgress(100, "اكتمل إرسال القراءات: $synced ناجحة، $retryable ستُعاد تلقائياً، $needsReview تحتاج مراجعة.")
-            if (synced > 0) dao.clearSyncedReadings()
+            if (synced > 0) {
+                dao.clearSyncedReadings()
+                // Refresh the server-authoritative meter baseline after successful uploads.
+                // This keeps platform-entered readings and field-entered readings in sync
+                // without discarding any unsynced local work.
+                runCatching { refreshSubscribers() }
+            }
             val summary = SyncSummary(synced, retryable, needsReview)
             queueSyncEvent(branchId, "sync_cycle", when { needsReview > 0 -> "needs_review"; retryable > 0 -> "partial"; else -> "success" }, summary)
             summary
