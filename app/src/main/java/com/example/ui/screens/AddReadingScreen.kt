@@ -60,6 +60,7 @@ fun AddReadingScreen(
     var extractedReading by remember { mutableStateOf<String?>(null) }
     var ocrMessage by remember { mutableStateOf<String?>(null) }
     var readingApproved by remember { mutableStateOf(false) }
+    var isOcrProcessing by remember { mutableStateOf(false) }
 
     var latitude by remember { mutableStateOf<Double?>(null) }
     var longitude by remember { mutableStateOf<Double?>(null) }
@@ -79,6 +80,7 @@ fun AddReadingScreen(
         extractedReading = null
         ocrMessage = null
         readingApproved = false
+        isOcrProcessing = false
     }
 
     val fusedLocation = remember { LocationServices.getFusedLocationProviderClient(context) }
@@ -138,16 +140,24 @@ fun AddReadingScreen(
         extractedReading = null
         ocrMessage = null
         readingApproved = false
+        isOcrProcessing = success && pendingPhotoUri != null
 
         if (success && pendingPhotoUri != null) {
             MeterReadingOcr.extract(context, pendingPhotoUri!!) { value, message ->
+                isOcrProcessing = false
                 extractedReading = value
                 ocrMessage = message
-                if (value != null) currentReadingStr = value
+                if (value != null) {
+                    currentReadingStr = value
+                    readingApproved = true
+                    Toast.makeText(context, "تم استخراج القراءة $value تلقائياً. راجع الرقم قبل الحفظ.", Toast.LENGTH_LONG).show()
+                } else {
+                    Toast.makeText(context, message ?: "تعذر استخراج الرقم؛ يمكنك إدخاله يدوياً.", Toast.LENGTH_LONG).show()
+                }
             }
         }
 
-        Toast.makeText(context, if (success) "تم التقاط صورة القراءة." else "لم يتم حفظ الصورة.", Toast.LENGTH_SHORT).show()
+        Toast.makeText(context, if (success) "تم التقاط الصورة، جارٍ استخراج رقم العداد..." else "لم يتم حفظ الصورة.", Toast.LENGTH_SHORT).show()
     }
 
     LaunchedEffect(Unit) {
@@ -323,6 +333,17 @@ fun AddReadingScreen(
                             modifier = Modifier.fillMaxWidth().testTag("current_reading_input"),
                             shape = RoundedCornerShape(10.dp), singleLine = true
                         )
+                        if (isOcrProcessing) {
+                            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp)
+                                Text("جارٍ استخراج رقم العداد من الصورة تلقائياً...", fontSize = 12.sp, color = MaterialTheme.colorScheme.primary)
+                            }
+                        } else if (extractedReading != null) {
+                            Text("تم استخراج القراءة: $extractedReading — راجعها في الحقل أعلاه ويمكنك تعديلها.", fontSize = 12.sp, color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.SemiBold)
+                        } else if (ocrMessage != null && capturedPhotoPath != null) {
+                            Text(ocrMessage!!, fontSize = 12.sp, color = MaterialTheme.colorScheme.error)
+                        }
+
                         if (currentReadingStr.isNotEmpty()) {
                             val isInvalid = !isReadingReset && currentReadingVal < lastReading
                             val isVeryHigh = !isReadingReset && consumption > 500.0 && consumption > lastReading * 3
@@ -484,8 +505,8 @@ fun AddReadingScreen(
                         Toast.makeText(context, "الرجاء إدخال رقم قراءة صحيح أولاً", Toast.LENGTH_SHORT).show()
                     } else if (!currentReadingStr.matches(Regex("^\\d+(?:\\.\\d{1,2})?$"))) {
                         Toast.makeText(context, "أدخل قراءة صحيحة بمنزلة عشرية واحدة أو منزلتين كحد أقصى.", Toast.LENGTH_SHORT).show()
-                    } else if (capturedPhotoPath != null && !readingApproved) {
-                        Toast.makeText(context, "راجع القراءة المستخلصة واضغط اعتماد القراءة أولاً.", Toast.LENGTH_SHORT).show()
+                    } else if (isOcrProcessing) {
+                        Toast.makeText(context, "انتظر حتى ينتهي استخراج رقم العداد.", Toast.LENGTH_SHORT).show()
                     } else if (!isReadingReset && readingVal < sub.lastReading) {
                         Toast.makeText(context, "القراءة أقل من السابقة! قم بتفعيل إعادة الضبط إذا تم تصفير العداد.", Toast.LENGTH_LONG).show()
                     } else if (!isReadingReset && consumption > 500.0 && consumption > sub.lastReading * 3) {
