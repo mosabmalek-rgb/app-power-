@@ -788,7 +788,7 @@ fun ReadingCycleTabContent(
     }
 
     val readingsNeedingSync = remember(pendingReadings, currentCycleRange) {
-        val parser = java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss", java.util.Locale.US).apply {
+        val parser = java.text.SimpleDateFormat("yyyy-MM-dd HH:mm", java.util.Locale.US).apply {
             timeZone = java.util.TimeZone.getDefault()
         }
         pendingReadings.count { reading ->
