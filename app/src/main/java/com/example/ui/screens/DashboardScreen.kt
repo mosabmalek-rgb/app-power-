@@ -777,8 +777,17 @@ fun ReadingCycleTabContent(
     val syncedThisCycleCount = remember(subscribers, currentCycleRange) {
         subscribers.count { ReadingCycleCalculator.isSubscriberReadInCycle(it, emptyList(), currentCycleRange) }
     }
-    val readingsNeedingSync = remember(pendingReadings) {
-        pendingReadings.count { it.status in setOf("pending", "retryable", "syncing", "needs_review") }
+    val readingsNeedingSync = remember(pendingReadings, currentCycleRange) {
+        val parser = java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss", java.util.Locale.US).apply {
+            timeZone = java.util.TimeZone.getDefault()
+        }
+        pendingReadings.count { reading ->
+            val timestamp = runCatching { parser.parse(reading.readingDate)?.time }.getOrNull()
+            timestamp != null &&
+                timestamp >= currentCycleRange.startMillis &&
+                timestamp < currentCycleRange.endMillis &&
+                reading.status in setOf("pending", "retryable", "syncing", "needs_review")
+        }
     }
 
     var selectedFilter by remember { mutableStateOf(SubscriberCycleFilter.UNREAD_THIS_CYCLE) }
