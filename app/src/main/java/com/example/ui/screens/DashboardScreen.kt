@@ -30,6 +30,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.ui.FieldReadingViewModel
+import com.example.data.ProfileImageUtils
 import com.example.data.PendingReadingEntity
 import com.example.data.PendingPaymentEntity
 import com.example.data.ReadingCycleCalculator
@@ -55,7 +56,7 @@ fun DashboardScreen(
     val userName by viewModel.userName.collectAsState()
     val profileImagePath by viewModel.profileImagePath.collectAsState()
     val profileBitmap = remember(profileImagePath) {
-        profileImagePath?.let { path -> runCatching { BitmapFactory.decodeFile(path) }.getOrNull() }
+        profileImagePath?.let { path -> runCatching { ProfileImageUtils.decodeSampledFile(path) }.getOrNull() }
     }
     val userRole by viewModel.userRole.collectAsState()
     val companyName by viewModel.companyName.collectAsState()
@@ -304,7 +305,7 @@ fun DashboardScreen(
                             ) {
                                 if (profileBitmap != null) {
                                     Image(
-                                        bitmap = profileBitmap!!.asImageBitmap(),
+                                        bitmap = profileBitmap.asImageBitmap(),
                                         contentDescription = "صورة المستخدم",
                                         contentScale = androidx.compose.ui.layout.ContentScale.Crop,
                                         modifier = Modifier.fillMaxSize().clip(CircleShape)
