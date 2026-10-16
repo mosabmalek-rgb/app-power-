@@ -23,6 +23,9 @@ import retrofit2.converter.moshi.MoshiConverterFactory
 import java.util.concurrent.TimeUnit
 import java.security.MessageDigest
 
+// One process-wide lock coordinates token rotation across foreground and WorkManager stores.
+private val mobileSessionRefreshLock = Any()
+
 class MobileSessionStore(context: Context) {
     private val prefs: android.content.SharedPreferences = try {
         val masterKey = MasterKey.Builder(context).setKeyScheme(MasterKey.KeyScheme.AES256_GCM).build()
@@ -71,7 +74,7 @@ class MobileSessionStore(context: Context) {
         private val revokedEvents = MutableSharedFlow<Unit>(extraBufferCapacity = 1)
     }
 
-    fun save(session: MobileSessionResponse) {
+    fun save(session: MobileSessionResponse) = synchronized(mobileSessionRefreshLock) {
         prefs.edit()
             .putString("access_token", session.accessToken)
             .putString("refresh_token", session.refreshToken)
@@ -87,7 +90,7 @@ class MobileSessionStore(context: Context) {
         refreshToken: String,
         expiresInSeconds: Long,
         subscriptionEndsAt: String?
-    ) {
+    ) = synchronized(mobileSessionRefreshLock) {
         val editor = prefs.edit()
             .putString("access_token", accessToken)
             .putString("refresh_token", refreshToken)
@@ -105,7 +108,14 @@ class MobileSessionStore(context: Context) {
      * The server rejected both the device access token and its refresh token.
      * Remove credentials only: Room readings, payment queue, local PIN and settings remain intact.
      */
-    fun markSessionRevoked() {
+    /**
+     * Clear credentials only when the refresh token rejected by the server is still current.
+     * A concurrent successful rotation/login must never be erased by a stale 401 response.
+     */
+    fun markSessionRevoked(expectedRefreshToken: String): Boolean = synchronized(mobileSessionRefreshLock) {
+        if (prefs.getString("refresh_token", null) != expectedRefreshToken) {
+            return@synchronized false
+        }
         val wasLoggedIn = isLoggedIn()
         prefs.edit()
             .remove("access_token")
@@ -113,6 +123,7 @@ class MobileSessionStore(context: Context) {
             .putLong("access_expires_at", 0L)
             .apply()
         if (wasLoggedIn) revokedEvents.tryEmit(Unit)
+        true
     }
 
     fun clear() = prefs.edit().clear().apply()
@@ -133,7 +144,7 @@ private class MobileSessionAuthenticator(
         val errorCode = errorCode(response.peekBody(64L * 1024L).string())
         if (errorCode != "UNAUTHORIZED") return null
 
-        return synchronized(sessionStore) {
+        return synchronized(mobileSessionRefreshLock) {
             val requestToken = response.request.header("Authorization")
                 ?.removePrefix("Bearer ")
                 ?.takeIf { it.isNotBlank() }
@@ -167,7 +178,16 @@ private class MobileSessionAuthenticator(
 
                 if (refreshStatus !in 200..299) {
                     if (refreshStatus == 401 && errorCode(refreshBody) == "REFRESH_TOKEN_EXPIRED") {
-                        sessionStore.markSessionRevoked()
+                        val cleared = sessionStore.markSessionRevoked(refreshToken)
+                        if (!cleared) {
+                            // Another session rotation/login won the race; reuse the latest credentials.
+                            val latestAccessToken = sessionStore.accessToken()
+                            if (!latestAccessToken.isNullOrBlank()) {
+                                return@synchronized response.request.newBuilder()
+                                    .header("Authorization", "Bearer $latestAccessToken")
+                                    .build()
+                            }
+                        }
                     }
                     return@synchronized null
                 }
