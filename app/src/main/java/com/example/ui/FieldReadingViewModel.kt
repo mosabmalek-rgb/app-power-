@@ -391,6 +391,28 @@ class FieldReadingViewModel(application: Application) : AndroidViewModel(applica
         }
     }
 
+    private val _serverSyncedCycleCount = MutableStateFlow<Int?>(null)
+    val serverSyncedCycleCount: StateFlow<Int?> = _serverSyncedCycleCount.asStateFlow()
+
+    private val _cycleSyncStatsError = MutableStateFlow<String?>(null)
+    val cycleSyncStatsError: StateFlow<String?> = _cycleSyncStatsError.asStateFlow()
+
+    fun refreshCycleSyncStats() {
+        if (!_isLoggedIn.value) return
+        val range = currentCycleRange.value
+        viewModelScope.launch {
+            _cycleSyncStatsError.value = null
+            val result = repository.getCycleSyncedReadingCount(range.startMillis, range.endMillis)
+            if (result.isSuccess) {
+                _serverSyncedCycleCount.value = result.getOrNull()
+            } else {
+                _serverSyncedCycleCount.value = null
+                _cycleSyncStatsError.value = result.exceptionOrNull()?.message
+                    ?: "تعذر تحميل إحصاءات مزامنة الدورة من الخادم."
+            }
+        }
+    }
+
     fun syncAllData() {
         if (_isSyncing.value) return
         
@@ -407,6 +429,7 @@ class FieldReadingViewModel(application: Application) : AndroidViewModel(applica
             _isSyncing.value = false
             if (result.isSuccess) {
                 _syncStatusMessage.value = result.getOrNull()?.message() ?: "اكتملت المزامنة بنجاح"
+                refreshCycleSyncStats()
             } else {
                 _syncStatusMessage.value = "فشلت المزامنة: ${result.exceptionOrNull()?.message}"
             }
