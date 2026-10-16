@@ -1,6 +1,7 @@
 package com.example
 
 import com.example.data.OfflineSyncPolicy
+import com.example.data.ReadingValuePrecision
 import org.junit.Assert.assertEquals
 import org.junit.Test
 
