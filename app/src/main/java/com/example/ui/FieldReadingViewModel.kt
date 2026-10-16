@@ -235,6 +235,22 @@ class FieldReadingViewModel(application: Application) : AndroidViewModel(applica
     private val connectivityManager = application.getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager
     private var networkCallback: ConnectivityManager.NetworkCallback? = null
 
+    // This reflects actual validated internet access, not merely a connected Wi-Fi/mobile network.
+    private fun hasValidatedInternet(): Boolean {
+        val cm = connectivityManager ?: return false
+        val network = cm.activeNetwork ?: return false
+        val capabilities = cm.getNetworkCapabilities(network) ?: return false
+        return capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET) &&
+            capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED)
+    }
+
+    private val _isOnline = MutableStateFlow(hasValidatedInternet())
+    val isOnline: StateFlow<Boolean> = _isOnline.asStateFlow()
+
+    private fun refreshConnectivityState() {
+        _isOnline.value = hasValidatedInternet()
+    }
+
     init {
         // Auto-refresh/populate subscriber list if database is empty on start
         viewModelScope.launch {
@@ -250,20 +266,34 @@ class FieldReadingViewModel(application: Application) : AndroidViewModel(applica
             if (cm != null) {
                 val callback = object : ConnectivityManager.NetworkCallback() {
                     override fun onAvailable(network: Network) {
-                        viewModelScope.launch {
-                            // Check if we have pending items to sync
-                            val pending = pendingReadings.value.filter { it.status == "pending" }
-                            if (pending.isNotEmpty() && !_isSyncing.value) {
-                                syncAllData()
+                        refreshConnectivityState()
+                    }
+
+                    override fun onCapabilitiesChanged(network: Network, networkCapabilities: NetworkCapabilities) {
+                        refreshConnectivityState()
+                        val hasInternet = networkCapabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET) &&
+                            networkCapabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED)
+                        if (hasInternet) {
+                            viewModelScope.launch {
+                                val pending = pendingReadings.value.filter { it.status == "pending" || it.status == "retryable" }
+                                if (pending.isNotEmpty() && !_isSyncing.value) syncAllData()
                             }
                         }
                     }
+
+                    override fun onLost(network: Network) {
+                        // Re-check the active default network so switching between Wi-Fi and mobile data
+                        // does not briefly report offline when another validated network is available.
+                        refreshConnectivityState()
+                    }
+
+                    override fun onUnavailable() {
+                        _isOnline.value = false
+                    }
                 }
                 networkCallback = callback
-                val request = NetworkRequest.Builder()
-                    .addCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
-                    .build()
-                cm.registerNetworkCallback(request, callback)
+                cm.registerDefaultNetworkCallback(callback)
+                refreshConnectivityState()
             }
         }
     }
