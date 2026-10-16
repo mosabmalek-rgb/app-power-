@@ -331,6 +331,7 @@ class FieldReadingViewModel(application: Application) : AndroidViewModel(applica
         photoPath: String?,
         isReadingReset: Boolean,
         fieldVerified: Boolean = true,
+        readingValueText: String? = null,
         onResult: (Boolean, String) -> Unit
     ) {
         viewModelScope.launch {
@@ -342,7 +343,8 @@ class FieldReadingViewModel(application: Application) : AndroidViewModel(applica
                 longitude = longitude,
                 photoPath = photoPath,
                 isReadingReset = isReadingReset,
-                fieldVerified = fieldVerified
+                fieldVerified = fieldVerified,
+                readingValueText = readingValueText
             )
             if (result.isSuccess) {
                 FieldReadingSyncWorker.enqueue(getApplication())
