@@ -470,7 +470,7 @@ fun AddReadingScreen(
                                     if (extractedReading != null) {
                                         OutlinedTextField(value = extractedReading!!, onValueChange = { input -> if (input.isEmpty() || input.matches(Regex("\\d*(?:\\.\\d{0,2})?"))) { extractedReading = input; readingApproved = false } }, label = { Text("القراءة المستخلصة") }, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal), modifier = Modifier.fillMaxWidth().testTag("ocr_reading_input"), singleLine = true)
                                         Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                            OutlinedButton(onClick = { readingApproved = false; currentReadingStr = extractedReading.orEmpty() }, modifier = Modifier.weight(1f).testTag("change_ocr_reading_button")) { Text("تغيير القراءة") }
+                                            OutlinedButton(onClick = { currentReadingStr = extractedReading.orEmpty(); extractedReading = null; ocrMessage = null; readingApproved = false }, modifier = Modifier.weight(1f).testTag("change_ocr_reading_button")) { Text("تغيير القراءة") }
                                             Button(onClick = { currentReadingStr = extractedReading.orEmpty(); readingApproved = true }, modifier = Modifier.weight(1f).testTag("approve_ocr_reading_button")) { Text("اعتماد القراءة") }
                                         }
                                         Text(if (readingApproved) "تم اعتماد الرقم المستخلص، ويمكن حفظ القراءة." else "راجع الرقم ثم اضغط اعتماد القراءة قبل الحفظ.", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSecondaryContainer)
