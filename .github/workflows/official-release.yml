@@ -78,7 +78,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          bash ./gradlew testReleaseUnitTest assembleRelease --no-daemon --no-configuration-cache \
+          bash ./gradlew :app:testReleaseUnitTest :app:assembleRelease --no-daemon --no-configuration-cache \
             -PPOWERHUB_API_BASE_URL="$POWERHUB_API_BASE_URL" \
             -PPOWERHUB_REMOTE_CONFIG_URL="$POWERHUB_REMOTE_CONFIG_URL" \
             -PPOWERHUB_REMOTE_CONFIG_PUBLIC_KEY="$POWERHUB_REMOTE_CONFIG_PUBLIC_KEY"
