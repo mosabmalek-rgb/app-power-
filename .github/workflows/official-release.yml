@@ -1,6 +1,9 @@
 name: PowerHub Field App Official Release
 
 on:
+  push:
+    branches:
+      - build/official-release-1.5.3
   workflow_dispatch:
 
 permissions:
