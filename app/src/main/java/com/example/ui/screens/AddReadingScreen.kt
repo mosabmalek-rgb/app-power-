@@ -306,7 +306,18 @@ fun AddReadingScreen(
                         OutlinedTextField(value = "${sub.lastReading} ك.و/س", onValueChange = {}, label = { Text("آخر قراءة مسجلة (سابقة)") }, readOnly = true, leadingIcon = { Icon(Icons.Default.History, contentDescription = null) }, modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(10.dp))
                         OutlinedTextField(
                             value = currentReadingStr,
-                            onValueChange = { input -> if (input.isEmpty() || input.matches(Regex("\\d*(?:\\.\\d{0,2})?"))) currentReadingStr = input },
+                            onValueChange = { input ->
+                                if (input.isEmpty() || input.matches(Regex("\\d*(?:\\.\\d{0,2})?"))) {
+                                    currentReadingStr = input
+                                    // Editing a different value explicitly overrides the OCR candidate.
+                                    // Keep the captured evidence photo, but remove the OCR confirmation gate.
+                                    if (extractedReading != null && input != extractedReading) {
+                                        extractedReading = null
+                                        ocrMessage = null
+                                        readingApproved = false
+                                    }
+                                }
+                            },
                             label = { Text("القراءة الحالية للمشترك") },
                             placeholder = { Text("مثال: 128 أو 128.5 أو 128.52") },
                             leadingIcon = { Icon(Icons.Default.Speed, contentDescription = null) },
