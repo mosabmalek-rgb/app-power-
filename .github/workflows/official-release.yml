@@ -1,9 +1,6 @@
 name: PowerHub Field App Official Release
 
 on:
-  push:
-    branches:
-      - build/official-release-1.5.3
   workflow_dispatch:
 
 permissions:
@@ -15,10 +12,6 @@ env:
   POWERHUB_API_BASE_URL: ${{ vars.POWERHUB_API_BASE_URL || 'https://powerhub-platform.vercel.app/' }}
   POWERHUB_REMOTE_CONFIG_URL: ${{ vars.POWERHUB_REMOTE_CONFIG_URL || '' }}
   POWERHUB_REMOTE_CONFIG_PUBLIC_KEY: ${{ vars.POWERHUB_REMOTE_CONFIG_PUBLIC_KEY || '' }}
-  POWERHUB_KEYSTORE_PATH: ${{ runner.temp }}/powerhub-release.jks
-  POWERHUB_KEYSTORE_PASSWORD: ${{ secrets.POWERHUB_KEYSTORE_PASSWORD }}
-  POWERHUB_KEY_ALIAS: ${{ secrets.POWERHUB_KEY_ALIAS }}
-  POWERHUB_KEY_PASSWORD: ${{ secrets.POWERHUB_KEY_PASSWORD }}
 
 jobs:
   release:
@@ -39,7 +32,8 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          test -x "$(find "$ANDROID_HOME/cmdline-tools" -type f -name sdkmanager -print -quit)"
+          sdkmanager_path="$(find "$ANDROID_HOME/cmdline-tools" -type f -name sdkmanager -print -quit)"
+          test -n "$sdkmanager_path" && test -x "$sdkmanager_path"
           test -f "$ANDROID_HOME/platforms/android-36.1/android.jar"
           test -x "$ANDROID_HOME/build-tools/36.0.0/aapt2"
           test -x "$ANDROID_HOME/build-tools/36.0.0/apksigner"
@@ -47,6 +41,10 @@ jobs:
       - name: Restore official release signing key
         env:
           POWERHUB_RELEASE_KEYSTORE_BASE64: ${{ secrets.POWERHUB_RELEASE_KEYSTORE_BASE64 }}
+          POWERHUB_KEYSTORE_PASSWORD: ${{ secrets.POWERHUB_KEYSTORE_PASSWORD }}
+          POWERHUB_KEY_ALIAS: ${{ secrets.POWERHUB_KEY_ALIAS }}
+          POWERHUB_KEY_PASSWORD: ${{ secrets.POWERHUB_KEY_PASSWORD }}
+          POWERHUB_KEYSTORE_PATH: ${{ runner.temp }}/powerhub-release.jks
         shell: bash
         run: |
           set -euo pipefail
@@ -56,8 +54,8 @@ jobs:
               exit 1
             fi
           done
-          if [[ -z "${POWERHUB_API_BASE_URL:-}" || "${POWERHUB_API_BASE_URL}" != https://* ]]; then
-            echo "::error::POWERHUB_API_BASE_URL must be a valid HTTPS production origin."
+          if [[ -z "${POWERHUB_API_BASE_URL:-}" || "${POWERHUB_API_BASE_URL}" != https://* || "${POWERHUB_API_BASE_URL}" != */ ]]; then
+            echo "::error::POWERHUB_API_BASE_URL must be the HTTPS site origin ending in a slash."
             exit 1
           fi
           printf '%s' "$POWERHUB_RELEASE_KEYSTORE_BASE64" | base64 --decode > "$POWERHUB_KEYSTORE_PATH"
@@ -69,6 +67,11 @@ jobs:
         uses: gradle/actions/setup-gradle@v4
 
       - name: Run Release unit tests and assemble signed APK
+        env:
+          POWERHUB_KEYSTORE_PATH: ${{ runner.temp }}/powerhub-release.jks
+          POWERHUB_KEYSTORE_PASSWORD: ${{ secrets.POWERHUB_KEYSTORE_PASSWORD }}
+          POWERHUB_KEY_ALIAS: ${{ secrets.POWERHUB_KEY_ALIAS }}
+          POWERHUB_KEY_PASSWORD: ${{ secrets.POWERHUB_KEY_PASSWORD }}
         shell: bash
         run: |
           set -euo pipefail
