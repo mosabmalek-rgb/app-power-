@@ -78,7 +78,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          bash ./gradlew :app:testReleaseUnitTest :app:assembleRelease --no-daemon --no-configuration-cache \
+          bash ./gradlew :app:testDebugUnitTest :app:assembleRelease --no-daemon --no-configuration-cache \
             -PPOWERHUB_API_BASE_URL="$POWERHUB_API_BASE_URL" \
             -PPOWERHUB_REMOTE_CONFIG_URL="$POWERHUB_REMOTE_CONFIG_URL" \
             -PPOWERHUB_REMOTE_CONFIG_PUBLIC_KEY="$POWERHUB_REMOTE_CONFIG_PUBLIC_KEY"
@@ -89,7 +89,14 @@ jobs:
           set -euo pipefail
           apk="app/build/outputs/apk/release/app-release.apk"
           test -s "$apk"
-          "$ANDROID_HOME/build-tools/36.0.0/apksigner" verify --verbose --print-certs "$apk" | tee app/build/outputs/apk/release/signing-verification.txt
+          verification="$("$ANDROID_HOME/build-tools/36.0.0/apksigner" verify --verbose --print-certs "$apk")"
+          printf '%s\n' "$verification" | tee app/build/outputs/apk/release/signing-verification.txt
+          actual_fingerprint="$(printf '%s\n' "$verification" | awk -F': ' '/Signer #1 certificate SHA-256 digest:/ { gsub(/:/, "", $2); print tolower($2); exit }')"
+          expected_fingerprint="0747ab41f1a1573da1feff2ece86700dbaf2053e879689b741cbfef715b4cad6"
+          if [[ "$actual_fingerprint" != "$expected_fingerprint" ]]; then
+            echo "::error::APK certificate fingerprint does not match the configured official PowerHub release key."
+            exit 1
+          fi
           sha256sum "$apk" | tee app/build/outputs/apk/release/app-release.apk.sha256
           "$ANDROID_HOME/build-tools/36.0.0/aapt" dump badging "$apk" | sed -n '1,4p' > app/build/outputs/apk/release/app-release-build-info.txt
 
