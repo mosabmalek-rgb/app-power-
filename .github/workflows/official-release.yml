@@ -1,0 +1,100 @@
+name: PowerHub Field App Official Release
+
+on:
+  push:
+    branches:
+      - build/official-release-1.5.3
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  ANDROID_HOME: /usr/local/lib/android/sdk
+  ANDROID_SDK_ROOT: /usr/local/lib/android/sdk
+  POWERHUB_API_BASE_URL: ${{ vars.POWERHUB_API_BASE_URL || 'https://powerhub-platform.vercel.app/' }}
+  POWERHUB_REMOTE_CONFIG_URL: ${{ vars.POWERHUB_REMOTE_CONFIG_URL || '' }}
+  POWERHUB_REMOTE_CONFIG_PUBLIC_KEY: ${{ vars.POWERHUB_REMOTE_CONFIG_PUBLIC_KEY || '' }}
+  POWERHUB_KEYSTORE_PATH: ${{ runner.temp }}/powerhub-release.jks
+  POWERHUB_KEYSTORE_PASSWORD: ${{ secrets.POWERHUB_KEYSTORE_PASSWORD }}
+  POWERHUB_KEY_ALIAS: ${{ secrets.POWERHUB_KEY_ALIAS }}
+  POWERHUB_KEY_PASSWORD: ${{ secrets.POWERHUB_KEY_PASSWORD }}
+
+jobs:
+  release:
+    name: Test, sign, and verify Release APK
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Set up Java 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+          cache: gradle
+
+      - name: Verify Android SDK
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -x "$(find "$ANDROID_HOME/cmdline-tools" -type f -name sdkmanager -print -quit)"
+          test -f "$ANDROID_HOME/platforms/android-36.1/android.jar"
+          test -x "$ANDROID_HOME/build-tools/36.0.0/aapt2"
+          test -x "$ANDROID_HOME/build-tools/36.0.0/apksigner"
+
+      - name: Restore official release signing key
+        env:
+          POWERHUB_RELEASE_KEYSTORE_BASE64: ${{ secrets.POWERHUB_RELEASE_KEYSTORE_BASE64 }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          for name in POWERHUB_RELEASE_KEYSTORE_BASE64 POWERHUB_KEYSTORE_PASSWORD POWERHUB_KEY_ALIAS POWERHUB_KEY_PASSWORD; do
+            if [[ -z "${!name:-}" ]]; then
+              echo "::error::Required GitHub Actions secret ${name} is not configured."
+              exit 1
+            fi
+          done
+          if [[ -z "${POWERHUB_API_BASE_URL:-}" || "${POWERHUB_API_BASE_URL}" != https://* ]]; then
+            echo "::error::POWERHUB_API_BASE_URL must be a valid HTTPS production origin."
+            exit 1
+          fi
+          printf '%s' "$POWERHUB_RELEASE_KEYSTORE_BASE64" | base64 --decode > "$POWERHUB_KEYSTORE_PATH"
+          chmod 600 "$POWERHUB_KEYSTORE_PATH"
+          test -s "$POWERHUB_KEYSTORE_PATH"
+          keytool -list -keystore "$POWERHUB_KEYSTORE_PATH" -storepass "$POWERHUB_KEYSTORE_PASSWORD" -alias "$POWERHUB_KEY_ALIAS" >/dev/null
+
+      - name: Set up Gradle cache
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Run Release unit tests and assemble signed APK
+        shell: bash
+        run: |
+          set -euo pipefail
+          bash ./gradlew testReleaseUnitTest assembleRelease --no-daemon --no-configuration-cache \
+            -PPOWERHUB_API_BASE_URL="$POWERHUB_API_BASE_URL" \
+            -PPOWERHUB_REMOTE_CONFIG_URL="$POWERHUB_REMOTE_CONFIG_URL" \
+            -PPOWERHUB_REMOTE_CONFIG_PUBLIC_KEY="$POWERHUB_REMOTE_CONFIG_PUBLIC_KEY"
+
+      - name: Verify APK signature and record checksum
+        shell: bash
+        run: |
+          set -euo pipefail
+          apk="app/build/outputs/apk/release/app-release.apk"
+          test -s "$apk"
+          "$ANDROID_HOME/build-tools/36.0.0/apksigner" verify --verbose --print-certs "$apk" | tee app/build/outputs/apk/release/signing-verification.txt
+          sha256sum "$apk" | tee app/build/outputs/apk/release/app-release.apk.sha256
+          "$ANDROID_HOME/build-tools/36.0.0/aapt" dump badging "$apk" | sed -n '1,4p' > app/build/outputs/apk/release/app-release-build-info.txt
+
+      - name: Upload signed Release APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: powerhub-field-app-v1.5.3-release-signed
+          path: |
+            app/build/outputs/apk/release/app-release.apk
+            app/build/outputs/apk/release/app-release.apk.sha256
+            app/build/outputs/apk/release/signing-verification.txt
+            app/build/outputs/apk/release/app-release-build-info.txt
+          if-no-files-found: error
+          retention-days: 30
