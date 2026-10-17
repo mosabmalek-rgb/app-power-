@@ -30,6 +30,14 @@ class FieldReadingViewModel(application: Application) : AndroidViewModel(applica
     private val _userName = MutableStateFlow(repository.getUserName())
     val userName: StateFlow<String> = _userName.asStateFlow()
 
+    private val _profileImagePath = MutableStateFlow(repository.getProfileImagePath())
+    val profileImagePath: StateFlow<String?> = _profileImagePath.asStateFlow()
+
+    fun saveProfileImagePath(path: String) {
+        repository.setProfileImagePath(path)
+        _profileImagePath.value = path
+    }
+
     private val _userRole = MutableStateFlow(repository.getUserRole())
     val userRole: StateFlow<String> = _userRole.asStateFlow()
 
@@ -340,6 +348,7 @@ class FieldReadingViewModel(application: Application) : AndroidViewModel(applica
             if (result.isSuccess) {
                 _isLoggedIn.value = true
                 _userName.value = repository.getUserName()
+                _profileImagePath.value = repository.getProfileImagePath()
                 _userRole.value = repository.getUserRole()
                 _companyName.value = repository.getCompanyName()
                 _savedUsername.value = repository.getSavedUsername()

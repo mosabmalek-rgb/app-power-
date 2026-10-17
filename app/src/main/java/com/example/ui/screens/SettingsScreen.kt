@@ -2,6 +2,8 @@ package com.example.ui.screens
 
 import android.graphics.BitmapFactory
 import android.net.Uri
+import java.io.File
+import java.io.FileOutputStream
 import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
@@ -33,6 +35,7 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.example.data.ProfileImageUtils
 import com.example.data.ReadingCycleCalculator
 import com.example.data.ReadingCycleType
 import com.example.ui.FieldReadingViewModel
@@ -51,23 +54,36 @@ fun SettingsScreen(
     val weeklyCycleStartDay by viewModel.weeklyCycleStartDay.collectAsState()
     val currentCycleRange by viewModel.currentCycleRange.collectAsState()
     val context = LocalContext.current
+    val profileImagePath by viewModel.profileImagePath.collectAsState()
+    var profileBitmap by remember { mutableStateOf<android.graphics.Bitmap?>(null) }
 
-    var profileImageUri by remember { mutableStateOf<Uri?>(null) }
+    LaunchedEffect(profileImagePath) {
+        profileBitmap = profileImagePath?.let { path ->
+            runCatching { ProfileImageUtils.decodeSampledFile(path) }.getOrNull()
+        }
+    }
+
     val pickProfileImage = rememberLauncherForActivityResult(
         ActivityResultContracts.PickVisualMedia()
     ) { uri ->
         if (uri != null) {
-            profileImageUri = uri
+            val savedPath = runCatching {
+                ProfileImageUtils.saveFromUri(context, uri)
+            }.getOrNull()
+            if (savedPath != null) {
+                runCatching { viewModel.saveProfileImagePath(savedPath) }
+                    .onSuccess {
+                        profileBitmap = ProfileImageUtils.decodeSampledFile(savedPath)
+                        Toast.makeText(context, "تم حفظ صورة الملف بنجاح.", Toast.LENGTH_SHORT).show()
+                    }
+                    .onFailure {
+                        Toast.makeText(context, it.message ?: "تعذر حفظ صورة الملف.", Toast.LENGTH_LONG).show()
+                    }
+            } else {
+                Toast.makeText(context, "تعذر حفظ الصورة. اختر صورة أخرى وحاول مجدداً.", Toast.LENGTH_LONG).show()
+            }
         } else {
             Toast.makeText(context, "لم يتم تحديد صورة.", Toast.LENGTH_SHORT).show()
-        }
-    }
-
-    val profileBitmap = remember(profileImageUri) {
-        profileImageUri?.let { uri ->
-            context.contentResolver.openInputStream(uri)?.use { stream ->
-                BitmapFactory.decodeStream(stream)
-            }
         }
     }
 
@@ -123,9 +139,10 @@ fun SettingsScreen(
                             },
                         contentAlignment = Alignment.Center
                     ) {
-                        if (profileBitmap != null) {
+                        val visibleProfileBitmap = profileBitmap
+                        if (visibleProfileBitmap != null) {
                             Image(
-                                bitmap = profileBitmap.asImageBitmap(),
+                                bitmap = visibleProfileBitmap.asImageBitmap(),
                                 contentDescription = "صورة الملف",
                                 modifier = Modifier
                                     .fillMaxSize()

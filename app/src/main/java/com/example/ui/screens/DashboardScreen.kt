@@ -1,6 +1,8 @@
 package com.example.ui.screens
 
+import android.graphics.BitmapFactory
 import androidx.activity.compose.BackHandler
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -18,6 +20,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -27,6 +30,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.ui.FieldReadingViewModel
+import com.example.data.ProfileImageUtils
 import com.example.data.PendingReadingEntity
 import com.example.data.PendingPaymentEntity
 import com.example.data.ReadingCycleCalculator
@@ -50,6 +54,10 @@ fun DashboardScreen(
     var cycleSubscribersFilter by remember { mutableStateOf(SubscriberCycleFilter.UNREAD_THIS_CYCLE) }
 
     val userName by viewModel.userName.collectAsState()
+    val profileImagePath by viewModel.profileImagePath.collectAsState()
+    val profileBitmap = remember(profileImagePath) {
+        profileImagePath?.let { path -> runCatching { ProfileImageUtils.decodeSampledFile(path) }.getOrNull() }
+    }
     val userRole by viewModel.userRole.collectAsState()
     val companyName by viewModel.companyName.collectAsState()
     val pendingReadings by viewModel.pendingReadings.collectAsState()
@@ -295,12 +303,21 @@ fun DashboardScreen(
                                     .border(1.5.dp, Color.White.copy(alpha = 0.35f), CircleShape),
                                 contentAlignment = Alignment.Center
                             ) {
-                                Text(
-                                    text = userName.firstOrNull()?.toString() ?: "م",
-                                    color = Color.White,
-                                    fontWeight = FontWeight.Bold,
-                                    fontSize = 20.sp
-                                )
+                                if (profileBitmap != null) {
+                                    Image(
+                                        bitmap = profileBitmap.asImageBitmap(),
+                                        contentDescription = "صورة المستخدم",
+                                        contentScale = androidx.compose.ui.layout.ContentScale.Crop,
+                                        modifier = Modifier.fillMaxSize().clip(CircleShape)
+                                    )
+                                } else {
+                                    Text(
+                                        text = userName.firstOrNull()?.toString() ?: "م",
+                                        color = Color.White,
+                                        fontWeight = FontWeight.Bold,
+                                        fontSize = 20.sp
+                                    )
+                                }
                             }
                             Spacer(modifier = Modifier.width(12.dp))
                             Column {
