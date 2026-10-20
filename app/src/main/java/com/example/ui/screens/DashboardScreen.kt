@@ -211,7 +211,8 @@ fun DashboardScreen(
                                     !isOnline -> Color(0xFFDC2626)
                                     isSyncing -> Color(0xFF2563EB)
                                     totalPending > 0 -> Color(0xFFD97706)
-                                    else -> Color(0xFF16A34A)
+                                    // Neutral: validated internet does not prove API reachability.
+                                    else -> Color(0xFF64748B)
                                 },
                                 modifier = Modifier.size(22.dp)
                             )
