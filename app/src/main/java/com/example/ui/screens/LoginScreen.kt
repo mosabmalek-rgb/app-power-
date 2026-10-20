@@ -71,8 +71,8 @@ fun LoginScreen(
                 contentAlignment = Alignment.Center
             ) {
                 Image(
-                    painter = painterResource(id = R.drawable.field_app_icon),
-                    contentDescription = "شعار PowerHub",
+                    painter = painterResource(id = R.drawable.field_app_logo),
+                    contentDescription = "شعار PowerHub للقراءات الميدانية",
                     modifier = Modifier
                         .fillMaxSize()
                         .padding(8.dp),
