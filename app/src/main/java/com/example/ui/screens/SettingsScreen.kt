@@ -397,6 +397,10 @@ fun SettingsScreen(
                 )
             }
 
+            LaunchedEffect(Unit) {
+                viewModel.refreshReadingCycleConfiguration()
+            }
+
             // Reading Cycle Settings Card (تحديد دورة القراءات)
             Card(
                 modifier = Modifier.fillMaxWidth(),
@@ -477,82 +481,37 @@ fun SettingsScreen(
 
                     HorizontalDivider()
 
-                    // Cycle Options
-                    ReadingCycleType.values().forEach { cycleType ->
-                        val isSelected = readingCycleType == cycleType
-                        Surface(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .clickable {
-                                    viewModel.setReadingCycleType(cycleType)
-                                    Toast.makeText(context, "تم تحديد الدورة: ${cycleType.titleAr}", Toast.LENGTH_SHORT).show()
-                                },
-                            shape = RoundedCornerShape(12.dp),
-                            color = if (isSelected) MaterialTheme.colorScheme.primary.copy(alpha = 0.08f) else MaterialTheme.colorScheme.surface,
-                            border = BorderStroke(
-                                width = if (isSelected) 1.5.dp else 1.dp,
-                                color = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant
-                            )
+                    val cycleTitle = readingCycleType.titleAr
+                    val cycleDescription = when (readingCycleType) {
+                        ReadingCycleType.WEEKLY -> "تُحتسب الدورة من يوم ${ReadingCycleCalculator.getDayNameAr(weeklyCycleStartDay)}."
+                        ReadingCycleType.EVERY_10_DAYS -> "الدورة حسب نقاط البداية المعتمدة في منصة PowerHub."
+                        ReadingCycleType.EVERY_15_DAYS -> "الدورة حسب نقاط البداية المعتمدة في منصة PowerHub."
+                        ReadingCycleType.MONTHLY -> "الدورة الشهرية حسب إعداد منصة PowerHub."
+                    }
+                    Surface(
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(12.dp),
+                        color = MaterialTheme.colorScheme.primary.copy(alpha = 0.06f),
+                        border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.28f))
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(14.dp),
+                            verticalAlignment = Alignment.Top,
+                            horizontalArrangement = Arrangement.spacedBy(12.dp)
                         ) {
-                            Column(modifier = Modifier.padding(12.dp)) {
-                                Row(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    verticalAlignment = Alignment.CenterVertically
+                            Icon(Icons.Default.CloudDone, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(26.dp))
+                            Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                                Text(cycleTitle, fontSize = 16.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
+                                Text(cycleDescription, fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurface)
+                                Text(currentCycleRange.labelAr, fontSize = 12.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                Text("نظام الدورة يُدار من منصة PowerHub ولا يمكن تغييره من التطبيق.", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                TextButton(
+                                    onClick = { viewModel.refreshReadingCycleConfiguration() },
+                                    contentPadding = PaddingValues(0.dp)
                                 ) {
-                                    RadioButton(
-                                        selected = isSelected,
-                                        onClick = {
-                                            viewModel.setReadingCycleType(cycleType)
-                                            Toast.makeText(context, "تم تحديد الدورة: ${cycleType.titleAr}", Toast.LENGTH_SHORT).show()
-                                        }
-                                    )
-                                    Spacer(modifier = Modifier.width(8.dp))
-                                    Column {
-                                        Text(
-                                            text = cycleType.titleAr,
-                                            fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
-                                            fontSize = 14.sp,
-                                            color = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface
-                                        )
-                                        Text(
-                                            text = cycleType.descriptionAr,
-                                            fontSize = 11.sp,
-                                            color = MaterialTheme.colorScheme.outline
-                                        )
-                                    }
-                                }
-
-                                // If WEEKLY is selected, show Day Picker
-                                if (cycleType == ReadingCycleType.WEEKLY && isSelected) {
-                                    Spacer(modifier = Modifier.height(10.dp))
-                                    Text(
-                                        text = "يوم بدء الدورة الأسبوعية:",
-                                        fontSize = 12.sp,
-                                        fontWeight = FontWeight.Bold,
-                                        color = MaterialTheme.colorScheme.primary,
-                                        modifier = Modifier.padding(horizontal = 4.dp)
-                                    )
-                                    Spacer(modifier = Modifier.height(6.dp))
-                                    Row(
-                                        modifier = Modifier
-                                            .fillMaxWidth()
-                                            .horizontalScroll(rememberScrollState()),
-                                        horizontalArrangement = Arrangement.spacedBy(6.dp)
-                                    ) {
-                                        ReadingCycleCalculator.ARABIC_DAYS.forEach { (calDay, dayName) ->
-                                            val isDaySelected = weeklyCycleStartDay == calDay
-                                            FilterChip(
-                                                selected = isDaySelected,
-                                                onClick = {
-                                                    viewModel.setWeeklyCycleStartDay(calDay)
-                                                    Toast.makeText(context, "بدء الدورة: يوم $dayName", Toast.LENGTH_SHORT).show()
-                                                },
-                                                label = {
-                                                    Text(dayName, fontSize = 11.sp, fontWeight = if (isDaySelected) FontWeight.Bold else FontWeight.Normal)
-                                                }
-                                            )
-                                        }
-                                    }
+                                    Icon(Icons.Default.Refresh, contentDescription = null, modifier = Modifier.size(16.dp))
+                                    Spacer(Modifier.width(6.dp))
+                                    Text("تحديث من المنصة")
                                 }
                             }
                         }

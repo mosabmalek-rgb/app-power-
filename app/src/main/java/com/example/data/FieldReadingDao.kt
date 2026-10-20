@@ -29,8 +29,18 @@ interface FieldReadingDao {
     @Query("SELECT * FROM pending_readings WHERE subscriberId = :subscriberId")
     suspend fun getReadingsForSubscriber(subscriberId: String): List<PendingReadingEntity>
 
+    @Query("SELECT COUNT(*) FROM pending_readings WHERE subscriberId = :subscriberId AND readingDate >= :startDateInclusive AND readingDate < :endDateExclusive")
+    suspend fun countReadingsForSubscriberInRange(subscriberId: String, startDateInclusive: String, endDateExclusive: String): Int
+
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertPendingReading(reading: PendingReadingEntity): Long
+
+    @Transaction
+    suspend fun insertPendingReadingIfNoReadingInRange(reading: PendingReadingEntity, startDateInclusive: String, endDateExclusive: String): Boolean {
+        if (countReadingsForSubscriberInRange(reading.subscriberId, startDateInclusive, endDateExclusive) > 0) return false
+        insertPendingReading(reading)
+        return true
+    }
 
     @Query("UPDATE pending_readings SET status = :status WHERE localId = :localId")
     suspend fun updateReadingStatus(localId: Int, status: String)

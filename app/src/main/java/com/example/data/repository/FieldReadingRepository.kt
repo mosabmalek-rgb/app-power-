@@ -218,11 +218,36 @@ class FieldReadingRepository(
         val normalizedReadingText = ReadingValuePrecision.normalizeForSync(currentReading, readingValueText)
             ?: return Result.failure(Exception("القراءة يجب أن تكون رقماً صحيحاً أو تحتوي على منزلة أو منزلتين عشريتين كحد أقصى."))
         if (!isReadingReset && currentReading < subscriber.lastReading) return Result.failure(Exception("القراءة الحالية يجب أن تكون أكبر من أو تساوي القراءة السابقة."))
+        val configType = getReadingCycleType()
+        val configDay = getWeeklyCycleStartDay()
+        val cycle = com.example.data.ReadingCycleCalculator.calculateCurrentCycleRange(configType, configDay)
+        val duplicateMessage = "تم تسجيل قراءة لهذا المشترك ضمن الدورة الحالية. لا يمكن تسجيل قراءة ثانية حتى بدء الدورة التالية."
+        if (com.example.data.ReadingCycleCalculator.isDateInCycle(subscriber.lastReadingDate, cycle)) {
+            return Result.failure(IllegalStateException(duplicateMessage))
+        }
         val existing = dao.getReadingsForSubscriber(subscriberId)
-        if (existing.any { it.currentReading == currentReading }) return Result.failure(Exception("تم حفظ القراءة نفسها محلياً مسبقاً."))
-        val today = currentDateTime().substringBefore(" ")
-        if (existing.any { it.readingDate.startsWith(today) } && !isReadingReset) return Result.failure(Exception("توجد قراءة محلية لهذا المشترك اليوم."))
-        dao.insertPendingReading(PendingReadingEntity(subscriberId = subscriberId, currentReading = currentReading, readingDate = currentDateTime(), notes = notes, latitude = latitude, longitude = longitude, photoPath = photoPath, status = "pending", isReadingReset = isReadingReset, fieldVerified = fieldVerified, readingValueText = normalizedReadingText))
+        if (existing.any { com.example.data.ReadingCycleCalculator.isDateInCycle(it.readingDate, cycle) }) {
+            return Result.failure(IllegalStateException(duplicateMessage))
+        }
+        val dateFormat = SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.US).apply { isLenient = false }
+        val start = dateFormat.format(Date(cycle.startMillis))
+        val end = dateFormat.format(Date(Math.addExact(cycle.endMillis, 1L)))
+        val reading = PendingReadingEntity(
+            subscriberId = subscriberId,
+            currentReading = currentReading,
+            readingDate = currentDateTime(),
+            notes = notes,
+            latitude = latitude,
+            longitude = longitude,
+            photoPath = photoPath,
+            status = "pending",
+            isReadingReset = isReadingReset,
+            fieldVerified = fieldVerified,
+            readingValueText = normalizedReadingText
+        )
+        if (!dao.insertPendingReadingIfNoReadingInRange(reading, start, end)) {
+            return Result.failure(IllegalStateException(duplicateMessage))
+        }
         return Result.success(Unit)
     }
 

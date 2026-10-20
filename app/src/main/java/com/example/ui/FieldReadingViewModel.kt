@@ -114,6 +114,16 @@ class FieldReadingViewModel(application: Application) : AndroidViewModel(applica
         _cycleFilter.value = filter
     }
 
+    fun refreshReadingCycleConfiguration() {
+        if (!_isLoggedIn.value) return
+        viewModelScope.launch {
+            repository.refreshReadingCycleConfiguration().onSuccess {
+                _readingCycleType.value = repository.getReadingCycleType()
+                _weeklyCycleStartDay.value = repository.getWeeklyCycleStartDay()
+            }
+        }
+    }
+
     fun setReadingCycleType(type: ReadingCycleType) {
         repository.setReadingCycleType(type)
         _readingCycleType.value = type
