@@ -200,7 +200,12 @@ fun DashboardScreen(
                             Icon(
                                 Icons.Default.Sync,
                                 contentDescription = "المزامنة",
-                                tint = Color.Gray,
+                                tint = when {
+                                    !isOnline -> Color(0xFFDC2626)
+                                    isSyncing -> Color(0xFF2563EB)
+                                    totalPending > 0 -> Color(0xFFD97706)
+                                    else -> Color(0xFF16A34A)
+                                },
                                 modifier = Modifier.size(22.dp)
                             )
                             Text(
