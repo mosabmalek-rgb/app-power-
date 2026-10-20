@@ -61,6 +61,7 @@ fun DashboardScreen(
     val userRole by viewModel.userRole.collectAsState()
     val companyName by viewModel.companyName.collectAsState()
     val pendingReadings by viewModel.pendingReadings.collectAsState()
+    val pendingPayments by viewModel.pendingPayments.collectAsState()
     val subscribers by viewModel.subscribers.collectAsState()
     val unreadThisCycleCount by viewModel.unreadSubscribersCount.collectAsState()
     val readThisCycleCount by viewModel.readSubscribersCount.collectAsState()
@@ -70,8 +71,14 @@ fun DashboardScreen(
     val syncProgress by viewModel.syncProgress.collectAsState()
     val syncStatusMessage by viewModel.syncStatusMessage.collectAsState()
 
-    val pendingReadingsCount = pendingReadings.filter { it.status == "pending" }.size
-    val totalPending = pendingReadingsCount
+    // Count every unresolved local operation; retryable/review/failed work is not synced.
+    val unresolvedReadingCount = com.example.data.SyncQueueStatusPolicy.countUnresolved(
+        pendingReadings.asSequence().map { it.status }.asIterable()
+    )
+    val unresolvedPaymentCount = com.example.data.SyncQueueStatusPolicy.countUnresolved(
+        pendingPayments.asSequence().map { it.status }.asIterable()
+    )
+    val totalPending = unresolvedReadingCount + unresolvedPaymentCount
 
     // Calculate readings done today
     val todayDateString = java.text.SimpleDateFormat("yyyy-MM-dd", java.util.Locale.getDefault()).format(java.util.Date())
@@ -360,8 +367,8 @@ fun DashboardScreen(
                         val statusText = when {
                             !isOnline -> "غير متصل"
                             isSyncing -> "جاري المزامنة..."
-                            totalPending > 0 -> "متصل — معلّق محلياً ($totalPending)"
-                            else -> "متصل ومزامن"
+                            totalPending > 0 -> "متصل — توجد عمليات غير مكتملة ($totalPending)"
+                            else -> "الإنترنت متصل"
                         }
                         val statusBorder = when {
                             !isOnline -> Color(0x66F44336)
