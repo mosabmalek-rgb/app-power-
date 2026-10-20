@@ -3,7 +3,7 @@ name: PowerHub Field App Official Release
 on:
   push:
     branches:
-      - build/official-release-1.5.3
+      - release/signed-1.5.4
   workflow_dispatch:
 
 permissions:
@@ -103,7 +103,7 @@ jobs:
       - name: Upload signed Release APK
         uses: actions/upload-artifact@v4
         with:
-          name: powerhub-field-app-v1.5.3-release-signed
+          name: powerhub-field-app-v1.5.4-release-signed
           path: |
             app/build/outputs/apk/release/app-release.apk
             app/build/outputs/apk/release/app-release.apk.sha256
