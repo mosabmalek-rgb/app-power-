@@ -397,6 +397,10 @@ fun SettingsScreen(
                 )
             }
 
+            LaunchedEffect(Unit) {
+                viewModel.refreshReadingCycleConfiguration()
+            }
+
             // Reading Cycle Settings Card (تحديد دورة القراءات)
             Card(
                 modifier = Modifier.fillMaxWidth(),
