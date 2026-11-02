@@ -115,6 +115,39 @@ class FieldReadingRepository(
         prefs.edit().putInt("reading_cycle_weekly_day", day).apply()
     }
 
+    fun getSavedCycleRange(): com.example.data.CycleDateRange? {
+        val key = prefs.getString("server_cycle_key", null) ?: return null
+        val start = prefs.getLong("server_cycle_start", -1L)
+        val end = prefs.getLong("server_cycle_end", -1L)
+        val label = prefs.getString("server_cycle_label", key) ?: key
+        val zone = prefs.getString("server_cycle_timezone", "Asia/Gaza") ?: "Asia/Gaza"
+        if (start < 0L || end <= start) return null
+        return com.example.data.CycleDateRange(getReadingCycleType(), start, end, label, label, zone, key)
+    }
+
+    suspend fun refreshReadingCycleConfiguration(): Result<com.example.data.CycleDateRange> = runCatching {
+        ensureActiveAccessToken()
+        val branchId = activeBranchId()
+        if (branchId <= 0L) throw IllegalStateException("لا يوجد فرع ميداني محدد.")
+        val response = api.getReadingCycle(branchId)
+        val type = runCatching { ReadingCycleType.valueOf(response.cycle.cycleType.uppercase(Locale.US)) }
+            .getOrElse { throw IllegalStateException("نوع دورة القراءة الوارد من المنصة غير معروف.") }
+        val bounds = response.currentCycle
+        val range = com.example.data.ReadingCycleCalculator.fromServerBounds(type, bounds.key, bounds.startAt, bounds.endAt, bounds.label, response.cycle.timezone)
+            ?: throw IllegalStateException("حدود دورة القراءة الواردة من المنصة غير صالحة.")
+        prefs.edit().apply {
+            putString("reading_cycle_type", type.name)
+            putInt("reading_cycle_weekly_day", response.cycle.weeklyStartDay)
+            putString("server_cycle_key", bounds.key)
+            putLong("server_cycle_start", range.startMillis)
+            putLong("server_cycle_end", range.endMillis)
+            putString("server_cycle_label", bounds.label)
+            putString("server_cycle_timezone", response.cycle.timezone)
+            apply()
+        }
+        range
+    }
+
     suspend fun getCycleSyncedReadingCount(fromMillis: Long, toMillisInclusive: Long): Result<Int> = runCatching {
         ensureActiveAccessToken()
         val branchId = activeBranchId()
@@ -212,17 +245,23 @@ class FieldReadingRepository(
     val pendingPaymentsFlow: Flow<List<PendingPaymentEntity>> = dao.getAllPendingPaymentsFlow()
     fun getSubscriberFlow(id: String): Flow<SubscriberEntity?> = dao.getSubscriberByIdFlow(id)
 
-    suspend fun saveReading(subscriberId: String, currentReading: Double, notes: String, latitude: Double, longitude: Double, photoPath: String?, isReadingReset: Boolean, fieldVerified: Boolean = true, readingValueText: String? = null): Result<Unit> {
+    suspend fun saveReading(subscriberId: String, currentReading: Double, notes: String, latitude: Double, longitude: Double, photoPath: String?, isReadingReset: Boolean, cycleRange: com.example.data.CycleDateRange, fieldVerified: Boolean = true, readingValueText: String? = null): Result<Unit> {
         requireSubscriptionForOffline()
         val subscriber = dao.getSubscriberById(subscriberId) ?: return Result.failure(Exception("لم يتم العثور على بيانات هذا المشترك على الجهاز."))
         val normalizedReadingText = ReadingValuePrecision.normalizeForSync(currentReading, readingValueText)
             ?: return Result.failure(Exception("القراءة يجب أن تكون رقماً صحيحاً أو تحتوي على منزلة أو منزلتين عشريتين كحد أقصى."))
         if (!isReadingReset && currentReading < subscriber.lastReading) return Result.failure(Exception("القراءة الحالية يجب أن تكون أكبر من أو تساوي القراءة السابقة."))
-        val existing = dao.getReadingsForSubscriber(subscriberId)
-        if (existing.any { it.currentReading == currentReading }) return Result.failure(Exception("تم حفظ القراءة نفسها محلياً مسبقاً."))
-        val today = currentDateTime().substringBefore(" ")
-        if (existing.any { it.readingDate.startsWith(today) } && !isReadingReset) return Result.failure(Exception("توجد قراءة محلية لهذا المشترك اليوم."))
-        dao.insertPendingReading(PendingReadingEntity(subscriberId = subscriberId, currentReading = currentReading, readingDate = currentDateTime(), notes = notes, latitude = latitude, longitude = longitude, photoPath = photoPath, status = "pending", isReadingReset = isReadingReset, fieldVerified = fieldVerified, readingValueText = normalizedReadingText))
+        if (subscriber.hasReadingInCurrentCycle && subscriber.currentCycleKey == cycleRange.cycleKey) {
+            return Result.failure(Exception("تم تسجيل قراءة لهذا المشترك في دورة القراءة الحالية. حدّث القائمة ولا تسجل قراءة أخرى."))
+        }
+        val cycleKey = cycleRange.cycleKey ?: return Result.failure(Exception("تعذر التحقق من هوية دورة القراءة الحالية. اتصل بالإنترنت وحدّث بيانات الدورة قبل تسجيل القراءة."))
+        val zone = TimeZone.getTimeZone(cycleRange.timeZoneId)
+        val startText = SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.US).apply { timeZone = zone }.format(Date(cycleRange.startMillis))
+        val endExclusiveText = SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.US).apply { timeZone = zone }.format(Date(cycleRange.endMillis + 1L))
+        val reading = PendingReadingEntity(subscriberId = subscriberId, currentReading = currentReading, readingDate = currentDateTime(), notes = notes, latitude = latitude, longitude = longitude, photoPath = photoPath, status = "pending", isReadingReset = isReadingReset, fieldVerified = fieldVerified, readingValueText = normalizedReadingText, readingCycleKey = cycleKey)
+        if (!dao.insertPendingReadingIfNoReadingInCycle(reading, cycleKey, startText, endExclusiveText)) {
+            return Result.failure(Exception("توجد قراءة محفوظة لهذا المشترك في دورة القراءة الحالية، محلية أو على الخادم."))
+        }
         return Result.success(Unit)
     }
 
@@ -238,10 +277,18 @@ class FieldReadingRepository(
         val branchId = activeBranchId().takeIf { it in profile.branchIds } ?: profile.branchIds.firstOrNull()
             ?: throw IllegalStateException("لا توجد فروع ميدانية مسموحة لهذا الحساب.")
         prefs.edit().putLong("active_branch_id", branchId).apply()
+        val cycleRange = refreshReadingCycleConfiguration().getOrThrow()
         val allItems = buildList { var cursor: String? = null; do { val response = api.getSubscribers(branchId, 100, cursor); addAll(response.items); cursor = response.nextCursor } while (!cursor.isNullOrBlank()) }
-        dao.clearAllSubscribers()
-        dao.insertSubscribers(allItems.map { item ->
-            SubscriberEntity(id = item.id.toString(), refNumber = item.subscriberNo, name = item.fullName, phone = item.phone, address = item.address ?: "", branchId = item.branchId.toString(), lastReading = item.lastReading?.toDoubleOrNull() ?: 0.0, lastReadingDate = item.lastReadingAt ?: "", balance = 0.0)
+        dao.replaceSubscribersSnapshot(allItems.map { item ->
+            val cycleReading = item.currentCycleReading
+            SubscriberEntity(
+                id = item.id.toString(), refNumber = item.subscriberNo, name = item.fullName, phone = item.phone,
+                address = item.address ?: "", branchId = item.branchId.toString(),
+                lastReading = item.lastReading?.toDoubleOrNull() ?: 0.0, lastReadingDate = item.lastReadingAt ?: "", balance = 0.0,
+                hasReadingInCurrentCycle = item.hasReadingInCurrentCycle,
+                cycleReadingValue = cycleReading?.readingValue, cycleReadingAt = cycleReading?.readingAt,
+                cycleReadingStatus = cycleReading?.status, currentCycleKey = if (item.hasReadingInCurrentCycle) cycleRange.cycleKey else null
+            )
         })
     }
 
@@ -349,8 +396,8 @@ class FieldReadingRepository(
         is PermanentSyncException -> com.example.data.OfflineSyncIssue("needs_review", error.message ?: "تحتاج القراءة إلى مراجعة الفني.")
         is IOException -> OfflineSyncPolicy.forNetworkFailure()
         is HttpException -> {
-            val fallback = OfflineSyncPolicy.forHttpStatus(error.code())
             val serverError = parseServerApiError(error)
+            val fallback = OfflineSyncPolicy.forHttpStatus(error.code(), serverError?.code)
             val code = serverError?.code ?: "HTTP_${error.code()}"
             val message = serverError?.message?.takeIf { it.isNotBlank() } ?: fallback.message
             val details = serverError?.details?.takeIf { it.isNotBlank() }

@@ -41,6 +41,14 @@ class OfflineSyncPolicyTest {
     }
 
     @Test
+    fun `server duplicate in cycle requires review and retains server code`() {
+        val issue = OfflineSyncPolicy.forHttpStatus(409, "READING_ALREADY_EXISTS_IN_CYCLE")
+        assertEquals("needs_review", issue.status)
+        assertEquals("READING_ALREADY_EXISTS_IN_CYCLE", issue.errorCode)
+        assertEquals(true, issue.message.contains("دورة القراءة الحالية"))
+    }
+
+    @Test
     fun `server failure remains retryable`() {
         assertEquals("retryable", OfflineSyncPolicy.forHttpStatus(503).status)
     }

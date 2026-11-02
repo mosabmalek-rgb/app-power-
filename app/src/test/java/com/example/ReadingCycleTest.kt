@@ -58,4 +58,17 @@ class ReadingCycleTest {
         val range = ReadingCycleCalculator.calculateCurrentCycleRange(ReadingCycleType.WEEKLY, weeklyStartDay = Calendar.SATURDAY, referenceDate = saturday)
         assertTrue(range.labelAr.contains("السبت"))
     }
+
+    @Test
+    fun serverCycleBoundsPreserveCanonicalIdentityAndTimezone() {
+        val range = ReadingCycleCalculator.fromServerBounds(
+            ReadingCycleType.MONTHLY, "MONTHLY:2026-10-30",
+            "2026-10-29T22:00:00+00:00", "2026-11-28T21:59:59.999999+00:00",
+            "دورة شهرية تبدأ في 30", "Asia/Gaza"
+        )
+        assertTrue(range != null)
+        assertEquals("MONTHLY:2026-10-30", range?.cycleKey)
+        assertEquals("Asia/Gaza", range?.timeZoneId)
+        assertTrue(range!!.startMillis < range.endMillis)
+    }
 }
