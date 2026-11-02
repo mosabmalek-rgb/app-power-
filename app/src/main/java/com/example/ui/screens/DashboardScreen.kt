@@ -347,7 +347,7 @@ fun DashboardScreen(
                                         shape = RoundedCornerShape(6.dp)
                                     ) {
                                         Text(
-                                            text = "الدور: $userRole",
+                                            text = "الدور: مدخل قراءة",
                                             fontSize = 11.sp,
                                             fontWeight = FontWeight.Medium,
                                             color = Color.White.copy(alpha = 0.95f),
@@ -1145,7 +1145,7 @@ fun ReadingCycleTabContent(
                 OutlinedTextField(
                     value = searchQuery,
                     onValueChange = { searchQuery = it },
-                    placeholder = { Text("بحث في مشتركي الدورة...", fontSize = 12.sp) },
+                    placeholder = { Text("", fontSize = 12.sp) },
                     leadingIcon = { Icon(Icons.Default.Search, contentDescription = null, tint = Color.Gray, modifier = Modifier.size(20.dp)) },
                     trailingIcon = {
                         if (searchQuery.isNotEmpty()) {
@@ -1157,9 +1157,19 @@ fun ReadingCycleTabContent(
                     modifier = Modifier.fillMaxWidth(),
                     shape = RoundedCornerShape(12.dp),
                     colors = OutlinedTextFieldDefaults.colors(
+                        focusedTextColor = Color(0xFF0F172A),
+                        unfocusedTextColor = Color(0xFF0F172A),
+                        cursorColor = Color(0xFF004A77),
+                        focusedPlaceholderColor = Color(0xFF64748B),
+                        unfocusedPlaceholderColor = Color(0xFF64748B),
+                        focusedLeadingIconColor = Color(0xFF334155),
+                        unfocusedLeadingIconColor = Color(0xFF334155),
+                        focusedTrailingIconColor = Color(0xFF334155),
+                        unfocusedTrailingIconColor = Color(0xFF334155),
                         focusedContainerColor = Color.White,
                         unfocusedContainerColor = Color.White,
-                        focusedBorderColor = Color(0xFF004A77)
+                        focusedBorderColor = Color(0xFF004A77),
+                        unfocusedBorderColor = Color(0xFF94A3B8)
                     ),
                     singleLine = true
                 )

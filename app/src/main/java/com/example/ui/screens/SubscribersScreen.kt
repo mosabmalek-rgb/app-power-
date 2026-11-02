@@ -109,7 +109,7 @@ fun SubscribersScreen(
             OutlinedTextField(
                 value = searchQuery,
                 onValueChange = { viewModel.updateSearchQuery(it) },
-                placeholder = { Text("بحث باسم المشترك، الرقم المرجعي، أو الهاتف...") },
+                placeholder = { Text("") },
                 leadingIcon = {
                     Icon(Icons.Default.Search, contentDescription = "بحث")
                 },

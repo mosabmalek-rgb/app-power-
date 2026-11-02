@@ -9,6 +9,19 @@ data class MobileMeResponse(val user: MobileUser)
 data class MobileRefreshRequest(val refreshToken: String)
 data class MobileChangePasswordRequest(val newPassword: String)
 
+data class MobileReadingCycleBoundsDto(
+    val key: String,
+    val startAt: String,
+    val endAt: String,
+    val label: String,
+    val asOf: String? = null
+)
+data class MobileSubscriberCycleReadingDto(
+    val readingId: Long,
+    val readingValue: String,
+    val readingAt: String,
+    val status: String
+)
 data class MobileSubscriberDto(
     val id: Long,
     val subscriberNo: String,
@@ -17,14 +30,30 @@ data class MobileSubscriberDto(
     val address: String?,
     val branchId: Long,
     val lastReading: String?,
-    val lastReadingAt: String?
+    val lastReadingAt: String?,
+    val hasReadingInCurrentCycle: Boolean = false,
+    val currentCycleReading: MobileSubscriberCycleReadingDto? = null
 )
-data class MobileSubscribersResponse(val items: List<MobileSubscriberDto>, val nextCursor: String?)
+data class MobileSubscribersResponse(
+    val items: List<MobileSubscriberDto>,
+    val nextCursor: String?,
+    val currentCycle: MobileReadingCycleBoundsDto? = null
+)
 data class MobileCycleSyncStatsResponse(
     val branchId: Long,
     val from: String,
     val to: String,
     val syncedReadingCount: Int
+)
+data class MobileReadingCycleConfigDto(
+    val cycleType: String,
+    val weeklyStartDay: Int,
+    val monthlyStartDay: Int,
+    val timezone: String
+)
+data class MobileReadingCycleResponse(
+    val cycle: MobileReadingCycleConfigDto,
+    val currentCycle: MobileReadingCycleBoundsDto
 )
 
 
@@ -78,6 +107,9 @@ interface FieldReadingApi {
 
     @GET("api/mobile/v1/subscribers")
     suspend fun getSubscribers(@Query("branchId") branchId: Long, @Query("limit") limit: Int = 100, @Query("cursor") cursor: String? = null): MobileSubscribersResponse
+
+    @GET("api/mobile/v1/reading-cycle")
+    suspend fun getReadingCycle(@Query("branchId") branchId: Long): MobileReadingCycleResponse
 
     @GET("api/mobile/v1/reading-cycle-sync-stats")
     suspend fun getCycleSyncStats(

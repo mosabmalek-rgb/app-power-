@@ -14,7 +14,7 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         PendingPaymentEntity::class,
         PendingSyncEventEntity::class
     ],
-    version = 7,
+    version = 8,
     exportSchema = false
 )
 abstract class FieldReadingDatabase : RoomDatabase() {
@@ -53,6 +53,17 @@ abstract class FieldReadingDatabase : RoomDatabase() {
             }
         }
 
+        private val MIGRATION_7_8 = object : Migration(7, 8) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE subscribers ADD COLUMN hasReadingInCurrentCycle INTEGER NOT NULL DEFAULT 0")
+                db.execSQL("ALTER TABLE subscribers ADD COLUMN cycleReadingValue TEXT")
+                db.execSQL("ALTER TABLE subscribers ADD COLUMN cycleReadingAt TEXT")
+                db.execSQL("ALTER TABLE subscribers ADD COLUMN cycleReadingStatus TEXT")
+                db.execSQL("ALTER TABLE subscribers ADD COLUMN currentCycleKey TEXT")
+                db.execSQL("ALTER TABLE pending_readings ADD COLUMN readingCycleKey TEXT")
+            }
+        }
+
         private val MIGRATION_4_5 = object : Migration(4, 5) {
             override fun migrate(db: SupportSQLiteDatabase) {
                 db.execSQL("CREATE TABLE subscribers_new (id TEXT NOT NULL PRIMARY KEY, refNumber TEXT NOT NULL, name TEXT NOT NULL, phone TEXT NOT NULL, address TEXT NOT NULL, branchId TEXT NOT NULL, lastReading REAL NOT NULL, lastReadingDate TEXT NOT NULL, balance REAL NOT NULL)")
@@ -76,7 +87,7 @@ abstract class FieldReadingDatabase : RoomDatabase() {
                     FieldReadingDatabase::class.java,
                     "field_reading_database"
                 )
-                .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7)
+                .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8)
                 .build()
                 INSTANCE = instance
                 instance

@@ -21,7 +21,9 @@ data class CycleDateRange(
     val startMillis: Long,
     val endMillis: Long,
     val labelAr: String,
-    val shortRangeText: String
+    val shortRangeText: String,
+    val timeZoneId: String = "Asia/Gaza",
+    val cycleKey: String? = null
 )
 
 object ReadingCycleCalculator {
@@ -37,6 +39,59 @@ object ReadingCycleCalculator {
 
     fun getDayNameAr(dayOfWeek: Int): String {
         return ARABIC_DAYS.find { it.first == dayOfWeek }?.second ?: "السبت"
+    }
+
+    private fun safeTimeZone(value: String): TimeZone {
+        val requested = value.trim().ifBlank { "Asia/Gaza" }
+        val resolved = TimeZone.getTimeZone(requested)
+        return if (resolved.id == "GMT" && requested != "GMT" && requested != "UTC") {
+            TimeZone.getTimeZone("Asia/Gaza")
+        } else resolved
+    }
+
+    private fun parseServerInstant(value: String): Long? {
+        val normalized = Regex("""\.(\d+)(?=(Z|[+-]\d{2}:\d{2})$)""").replace(value.trim()) { match ->
+            "." + match.groupValues[1].padEnd(3, '0').take(3)
+        }
+        val patterns = listOf(
+            "yyyy-MM-dd'T'HH:mm:ss.SSSXXX",
+            "yyyy-MM-dd'T'HH:mm:ssXXX",
+            "yyyy-MM-dd'T'HH:mm:ss.SSS'Z'",
+            "yyyy-MM-dd'T'HH:mm:ss'Z'"
+        )
+        for (pattern in patterns) {
+            val parsed = runCatching {
+                SimpleDateFormat(pattern, Locale.US).apply {
+                    isLenient = false
+                    timeZone = TimeZone.getTimeZone("UTC")
+                }.parse(normalized)
+            }.getOrNull()
+            if (parsed != null) return parsed.time
+        }
+        return null
+    }
+
+    fun fromServerBounds(
+        type: ReadingCycleType,
+        cycleKey: String,
+        startAt: String,
+        endAt: String,
+        label: String,
+        timeZoneId: String
+    ): CycleDateRange? {
+        val start = parseServerInstant(startAt) ?: return null
+        val end = parseServerInstant(endAt) ?: return null
+        if (cycleKey.isBlank() || start >= end) return null
+        val display = label.ifBlank { cycleKey }
+        return CycleDateRange(
+            cycleType = type,
+            startMillis = start,
+            endMillis = end,
+            labelAr = display,
+            shortRangeText = display,
+            timeZoneId = safeTimeZone(timeZoneId).id,
+            cycleKey = cycleKey
+        )
     }
 
     fun calculateCurrentCycleRange(
@@ -207,25 +262,32 @@ object ReadingCycleCalculator {
         }
     }
 
-    fun parseDateToTimestamp(dateStr: String?): Long? {
+    fun parseDateToTimestamp(dateStr: String?, timeZoneId: String = "Asia/Gaza"): Long? {
         if (dateStr.isNullOrBlank()) return null
-        val trimmed = dateStr.trim()
-        return try {
-            if (trimmed.length >= 10 && trimmed[4] == '-' && trimmed[7] == '-') {
-                val ymd = trimmed.substring(0, 10)
-                val sdf = SimpleDateFormat("yyyy-MM-dd", Locale.US)
-                sdf.parse(ymd)?.time
-            } else {
-                val sdf = SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.US)
-                sdf.parse(trimmed)?.time
-            }
-        } catch (_: Exception) {
-            null
+        val value = dateStr.trim()
+        if (value.contains('T')) return parseServerInstant(value)
+        val zone = safeTimeZone(timeZoneId)
+        val patterns = if (value.length >= 19) {
+            listOf("yyyy-MM-dd HH:mm:ss", "yyyy-MM-dd HH:mm", "yyyy-MM-dd")
+        } else if (value.length >= 16) {
+            listOf("yyyy-MM-dd HH:mm", "yyyy-MM-dd")
+        } else {
+            listOf("yyyy-MM-dd", "yyyy-MM-dd HH:mm")
         }
+        for (pattern in patterns) {
+            val parsed = runCatching {
+                SimpleDateFormat(pattern, Locale.US).apply {
+                    isLenient = false
+                    timeZone = zone
+                }.parse(value)
+            }.getOrNull()
+            if (parsed != null) return parsed.time
+        }
+        return null
     }
 
     fun isDateInCycle(dateStr: String?, cycleRange: CycleDateRange): Boolean {
-        val timestamp = parseDateToTimestamp(dateStr) ?: return false
+        val timestamp = parseDateToTimestamp(dateStr, cycleRange.timeZoneId) ?: return false
         return timestamp in cycleRange.startMillis..cycleRange.endMillis
     }
 
@@ -234,10 +296,16 @@ object ReadingCycleCalculator {
         pendingReadings: List<PendingReadingEntity>,
         cycleRange: CycleDateRange
     ): Boolean {
-        val hasPendingInCycle = pendingReadings.any { reading ->
-            reading.subscriberId == subscriber.id && isDateInCycle(reading.readingDate, cycleRange)
-        }
-        if (hasPendingInCycle) return true
+        if (subscriber.hasReadingInCurrentCycle &&
+            (cycleRange.cycleKey == null || subscriber.currentCycleKey == cycleRange.cycleKey)
+        ) return true
+
+        if (pendingReadings.any { reading ->
+                reading.subscriberId == subscriber.id && (
+                    (cycleRange.cycleKey != null && reading.readingCycleKey == cycleRange.cycleKey) ||
+                        (reading.readingCycleKey == null && isDateInCycle(reading.readingDate, cycleRange))
+                    )
+            }) return true
 
         return isDateInCycle(subscriber.lastReadingDate, cycleRange)
     }

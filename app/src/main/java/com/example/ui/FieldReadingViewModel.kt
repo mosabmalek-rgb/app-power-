@@ -79,16 +79,21 @@ class FieldReadingViewModel(application: Application) : AndroidViewModel(applica
     private val _weeklyCycleStartDay = MutableStateFlow<Int>(repository.getWeeklyCycleStartDay())
     val weeklyCycleStartDay: StateFlow<Int> = _weeklyCycleStartDay.asStateFlow()
 
-    val currentCycleRange: StateFlow<CycleDateRange> = combine(
-        _readingCycleType,
-        _weeklyCycleStartDay
-    ) { type: ReadingCycleType, day: Int ->
-        ReadingCycleCalculator.calculateCurrentCycleRange(type, day)
-    }.stateIn(
-        viewModelScope,
-        SharingStarted.Eagerly,
-        ReadingCycleCalculator.calculateCurrentCycleRange(_readingCycleType.value, _weeklyCycleStartDay.value)
+    private val _currentCycleRange = MutableStateFlow(
+        repository.getSavedCycleRange() ?: ReadingCycleCalculator.calculateCurrentCycleRange(_readingCycleType.value, _weeklyCycleStartDay.value)
     )
+    val currentCycleRange: StateFlow<CycleDateRange> = _currentCycleRange.asStateFlow()
+
+    private suspend fun refreshAuthoritativeCycleAndSubscribers(): Result<Unit> {
+        if (!_isOnline.value) return Result.failure(IllegalStateException("لا يوجد اتصال إنترنت متحقق لتحديث دورة القراءة."))
+        val result = repository.refreshSubscribers()
+        if (result.isSuccess) {
+            _readingCycleType.value = repository.getReadingCycleType()
+            _weeklyCycleStartDay.value = repository.getWeeklyCycleStartDay()
+            repository.getSavedCycleRange()?.let { _currentCycleRange.value = it }
+        }
+        return result
+    }
 
     // Subscriber Cycle Filter (All, Unread this cycle, Read this cycle)
     private val _cycleFilter = MutableStateFlow(SubscriberCycleFilter.ALL)
@@ -115,13 +120,11 @@ class FieldReadingViewModel(application: Application) : AndroidViewModel(applica
     }
 
     fun setReadingCycleType(type: ReadingCycleType) {
-        repository.setReadingCycleType(type)
-        _readingCycleType.value = type
+        if (type == _readingCycleType.value) return
     }
 
     fun setWeeklyCycleStartDay(day: Int) {
-        repository.setWeeklyCycleStartDay(day)
-        _weeklyCycleStartDay.value = day
+        if (day == _weeklyCycleStartDay.value) return
     }
 
     // Unread & Read Subscribers in Current Cycle Counts
@@ -298,6 +301,7 @@ class FieldReadingViewModel(application: Application) : AndroidViewModel(applica
                             networkCapabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED)
                         if (hasInternet) {
                             viewModelScope.launch {
+                                if (_isLoggedIn.value && !_isSyncing.value) refreshAuthoritativeCycleAndSubscribers()
                                 val pending = pendingReadings.value.filter { it.status == "pending" || it.status == "retryable" }
                                 if (pending.isNotEmpty() && !_isSyncing.value) syncAllData()
                             }
@@ -389,6 +393,12 @@ class FieldReadingViewModel(application: Application) : AndroidViewModel(applica
         onResult: (Boolean, String) -> Unit
     ) {
         viewModelScope.launch {
+            val cycleResult = if (_isOnline.value) refreshAuthoritativeCycleAndSubscribers() else Result.success(Unit)
+            if (cycleResult.isFailure && repository.getSavedCycleRange() == null) {
+                onResult(false, "تعذر تحديث دورة القراءة من الخادم ولا توجد نسخة محلية موثوقة. اتصل بالإنترنت قبل تسجيل القراءة.")
+                return@launch
+            }
+            repository.getSavedCycleRange()?.let { _currentCycleRange.value = it }
             val result = repository.saveReading(
                 subscriberId = subscriberId,
                 currentReading = currentReading,
@@ -397,6 +407,7 @@ class FieldReadingViewModel(application: Application) : AndroidViewModel(applica
                 longitude = longitude,
                 photoPath = photoPath,
                 isReadingReset = isReadingReset,
+                cycleRange = currentCycleRange.value,
                 fieldVerified = fieldVerified,
                 readingValueText = readingValueText
             )
@@ -436,6 +447,11 @@ class FieldReadingViewModel(application: Application) : AndroidViewModel(applica
             _isSyncing.value = true
             _syncStatusMessage.value = "جاري سحب بيانات المشتركين..."
             val result = repository.refreshSubscribers()
+            if (result.isSuccess) {
+                _readingCycleType.value = repository.getReadingCycleType()
+                _weeklyCycleStartDay.value = repository.getWeeklyCycleStartDay()
+                repository.getSavedCycleRange()?.let { _currentCycleRange.value = it }
+            }
             _isSyncing.value = false
             if (result.isSuccess) {
                 _syncStatusMessage.value = "تم تحديث المشتركين بنجاح"
@@ -475,6 +491,11 @@ class FieldReadingViewModel(application: Application) : AndroidViewModel(applica
             _isSyncing.value = true
             _syncStatusMessage.value = "جاري تحديث بيانات دورة القراءات..."
             val subscribersResult = repository.refreshSubscribers()
+            if (subscribersResult.isSuccess) {
+                _readingCycleType.value = repository.getReadingCycleType()
+                _weeklyCycleStartDay.value = repository.getWeeklyCycleStartDay()
+                repository.getSavedCycleRange()?.let { _currentCycleRange.value = it }
+            }
             _cycleSyncStatsError.value = null
             val statsResult = repository.getCycleSyncedReadingCount(range.startMillis, range.endMillis)
             if (statsResult.isSuccess) {
