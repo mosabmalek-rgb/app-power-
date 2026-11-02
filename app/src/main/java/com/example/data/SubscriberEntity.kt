@@ -13,5 +13,10 @@ data class SubscriberEntity(
     val branchId: String,
     val lastReading: Double,
     val lastReadingDate: String,
-    val balance: Double
+    val balance: Double,
+    val hasReadingInCurrentCycle: Boolean = false,
+    val cycleReadingValue: String? = null,
+    val cycleReadingAt: String? = null,
+    val cycleReadingStatus: String? = null,
+    val currentCycleKey: String? = null
 )

@@ -22,5 +22,7 @@ data class PendingReadingEntity(
     val lastError: String? = null,
     val lastAttemptAt: Long? = null,
     // Store the original valid text so inputs like 128.0 and 128.00 keep their entered precision.
-    val readingValueText: String? = null
+    val readingValueText: String? = null,
+    // Canonical cycle identity received from the platform; does not depend on device date calculations.
+    val readingCycleKey: String? = null
 )

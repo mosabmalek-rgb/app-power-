@@ -20,6 +20,12 @@ interface FieldReadingDao {
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertSubscribers(subscribers: List<SubscriberEntity>)
 
+    @Transaction
+    suspend fun replaceSubscribersSnapshot(subscribers: List<SubscriberEntity>) {
+        clearAllSubscribers()
+        insertSubscribers(subscribers)
+    }
+
     @Query("SELECT * FROM pending_readings ORDER BY createdAt DESC")
     fun getAllPendingReadingsFlow(): Flow<List<PendingReadingEntity>>
 
@@ -29,8 +35,41 @@ interface FieldReadingDao {
     @Query("SELECT * FROM pending_readings WHERE subscriberId = :subscriberId")
     suspend fun getReadingsForSubscriber(subscriberId: String): List<PendingReadingEntity>
 
+    @Query("""
+        SELECT COUNT(*) FROM pending_readings
+        WHERE subscriberId = :subscriberId
+          AND (
+            readingCycleKey = :cycleKey
+            OR (
+              readingCycleKey IS NULL
+              AND readingDate >= :startDateInclusive
+              AND readingDate < :endDateExclusive
+            )
+          )
+    """)
+    suspend fun countReadingsForSubscriberInCycle(
+        subscriberId: String,
+        cycleKey: String,
+        startDateInclusive: String,
+        endDateExclusive: String
+    ): Int
+
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertPendingReading(reading: PendingReadingEntity): Long
+
+    @Transaction
+    suspend fun insertPendingReadingIfNoReadingInCycle(
+        reading: PendingReadingEntity,
+        cycleKey: String,
+        startDateInclusive: String,
+        endDateExclusive: String
+    ): Boolean {
+        if (countReadingsForSubscriberInCycle(reading.subscriberId, cycleKey, startDateInclusive, endDateExclusive) > 0) {
+            return false
+        }
+        insertPendingReading(reading)
+        return true
+    }
 
     @Query("UPDATE pending_readings SET status = :status WHERE localId = :localId")
     suspend fun updateReadingStatus(localId: Int, status: String)

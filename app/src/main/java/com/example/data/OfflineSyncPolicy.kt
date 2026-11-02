@@ -29,10 +29,19 @@ object ReadingValuePrecision {
 }
 
 object OfflineSyncPolicy {
-    fun forHttpStatus(statusCode: Int): OfflineSyncIssue = when (statusCode) {
-        401, 403 -> OfflineSyncIssue("needs_review", "انتهت صلاحية الحساب أو تغيرت الصلاحيات. سجّل الدخول مجدداً ثم أعد المحاولة.")
-        400, 404, 409, 422 -> OfflineSyncIssue("needs_review", "رفض الخادم القراءة ($statusCode). راجع المشترك والقراءة ثم أعد المحاولة.")
-        else -> OfflineSyncIssue("retryable", "تعذر على الخادم معالجة القراءة ($statusCode)؛ ستُعاد المحاولة تلقائياً.")
+    fun forHttpStatus(statusCode: Int, errorCode: String? = null): OfflineSyncIssue {
+        if (statusCode == 409 && errorCode == "READING_ALREADY_EXISTS_IN_CYCLE") {
+            return OfflineSyncIssue(
+                "needs_review",
+                "رفضت المنصة القراءة لوجود قراءة أخرى للمشترك في دورة القراءة الحالية. احتفظنا بالقراءة المحلية للمراجعة الفنية.",
+                errorCode
+            )
+        }
+        return when (statusCode) {
+            401, 403 -> OfflineSyncIssue("needs_review", "انتهت صلاحية الحساب أو تغيرت الصلاحيات. سجّل الدخول مجدداً ثم أعد المحاولة.", errorCode)
+            400, 404, 409, 422 -> OfflineSyncIssue("needs_review", "رفض الخادم القراءة ($statusCode). راجع المشترك والقراءة ثم أعد المحاولة.", errorCode)
+            else -> OfflineSyncIssue("retryable", "تعذر على الخادم معالجة القراءة ($statusCode)؛ ستُعاد المحاولة تلقائياً.", errorCode)
+        }
     }
 
     fun forNetworkFailure(): OfflineSyncIssue = OfflineSyncIssue(
