@@ -254,6 +254,9 @@ class FieldReadingRepository(
         if (subscriber.hasReadingInCurrentCycle && subscriber.currentCycleKey == cycleRange.cycleKey) {
             return Result.failure(Exception("تم تسجيل قراءة لهذا المشترك في دورة القراءة الحالية. حدّث القائمة ولا تسجل قراءة أخرى."))
         }
+        if (System.currentTimeMillis() !in cycleRange.startMillis..cycleRange.endMillis) {
+            return Result.failure(Exception("انتهت صلاحية نسخة دورة القراءة المحفوظة. اتصل بالإنترنت لتحديث الدورة قبل تسجيل القراءة."))
+        }
         val cycleKey = cycleRange.cycleKey ?: return Result.failure(Exception("تعذر التحقق من هوية دورة القراءة الحالية. اتصل بالإنترنت وحدّث بيانات الدورة قبل تسجيل القراءة."))
         val zone = TimeZone.getTimeZone(cycleRange.timeZoneId)
         val startText = SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.US).apply { timeZone = zone }.format(Date(cycleRange.startMillis))

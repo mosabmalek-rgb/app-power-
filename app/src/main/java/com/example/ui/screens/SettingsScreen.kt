@@ -477,86 +477,11 @@ fun SettingsScreen(
 
                     HorizontalDivider()
 
-                    // Cycle Options
-                    ReadingCycleType.values().forEach { cycleType ->
-                        val isSelected = readingCycleType == cycleType
-                        Surface(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .clickable {
-                                    viewModel.setReadingCycleType(cycleType)
-                                    Toast.makeText(context, "تم تحديد الدورة: ${cycleType.titleAr}", Toast.LENGTH_SHORT).show()
-                                },
-                            shape = RoundedCornerShape(12.dp),
-                            color = if (isSelected) MaterialTheme.colorScheme.primary.copy(alpha = 0.08f) else MaterialTheme.colorScheme.surface,
-                            border = BorderStroke(
-                                width = if (isSelected) 1.5.dp else 1.dp,
-                                color = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant
-                            )
-                        ) {
-                            Column(modifier = Modifier.padding(12.dp)) {
-                                Row(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    verticalAlignment = Alignment.CenterVertically
-                                ) {
-                                    RadioButton(
-                                        selected = isSelected,
-                                        onClick = {
-                                            viewModel.setReadingCycleType(cycleType)
-                                            Toast.makeText(context, "تم تحديد الدورة: ${cycleType.titleAr}", Toast.LENGTH_SHORT).show()
-                                        }
-                                    )
-                                    Spacer(modifier = Modifier.width(8.dp))
-                                    Column {
-                                        Text(
-                                            text = cycleType.titleAr,
-                                            fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
-                                            fontSize = 14.sp,
-                                            color = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface
-                                        )
-                                        Text(
-                                            text = cycleType.descriptionAr,
-                                            fontSize = 11.sp,
-                                            color = MaterialTheme.colorScheme.outline
-                                        )
-                                    }
-                                }
-
-                                // If WEEKLY is selected, show Day Picker
-                                if (cycleType == ReadingCycleType.WEEKLY && isSelected) {
-                                    Spacer(modifier = Modifier.height(10.dp))
-                                    Text(
-                                        text = "يوم بدء الدورة الأسبوعية:",
-                                        fontSize = 12.sp,
-                                        fontWeight = FontWeight.Bold,
-                                        color = MaterialTheme.colorScheme.primary,
-                                        modifier = Modifier.padding(horizontal = 4.dp)
-                                    )
-                                    Spacer(modifier = Modifier.height(6.dp))
-                                    Row(
-                                        modifier = Modifier
-                                            .fillMaxWidth()
-                                            .horizontalScroll(rememberScrollState()),
-                                        horizontalArrangement = Arrangement.spacedBy(6.dp)
-                                    ) {
-                                        ReadingCycleCalculator.ARABIC_DAYS.forEach { (calDay, dayName) ->
-                                            val isDaySelected = weeklyCycleStartDay == calDay
-                                            FilterChip(
-                                                selected = isDaySelected,
-                                                onClick = {
-                                                    viewModel.setWeeklyCycleStartDay(calDay)
-                                                    Toast.makeText(context, "بدء الدورة: يوم $dayName", Toast.LENGTH_SHORT).show()
-                                                },
-                                                label = {
-                                                    Text(dayName, fontSize = 11.sp, fontWeight = if (isDaySelected) FontWeight.Bold else FontWeight.Normal)
-                                                }
-                                            )
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
+                    Text(
+                        "تتم إدارة نوع دورة القراءة ويوم بدايتها من منصة PowerHub. يعرض التطبيق الدورة النشطة للقراءة فقط، وتُحدّث إعداداتها تلقائياً عند الاتصال بالإنترنت.",
+                        fontSize = 12.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
                 }
             }
 
