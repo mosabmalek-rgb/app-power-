@@ -217,30 +217,37 @@ class FieldReadingRepository(
         } catch (e: IOException) {
             throw Exception("تعذر الاتصال بالخادم. يرجى التحقق من اتصال الإنترنت.")
         }
-        // Subscriber snapshots are not shared across accounts or branches.
-        // Keep a separate owner record that survives logout, because logout clears prefs.
-        val ownerPrefs = context.getSharedPreferences("field_cache_owner", Context.MODE_PRIVATE)
-        val newBranchId = session.user.branchIds.firstOrNull() ?: -1L
-        val newOwner = "${session.user.tenantId}:${session.user.id}:$newBranchId"
-        val previousOwner = ownerPrefs.getString("owner", null)
-        val oldProfileUserId = prefs.getLong("profile_user_id", -1L)
-        val oldBranchId = prefs.getLong("active_branch_id", -1L)
-        val knownSameOwner = previousOwner == newOwner ||
-            (previousOwner == null && oldProfileUserId == session.user.id && oldBranchId == newBranchId)
-        if (!knownSameOwner) {
-            val unsentReadings = listOf("pending", "syncing", "retryable", "needs_review")
-                .any { dao.getPendingReadingsWithStatus(it).isNotEmpty() }
-            val unsentPayments = listOf("pending", "syncing", "retryable", "needs_review")
-                .any { dao.getPendingPaymentsWithStatus(it).isNotEmpty() }
-            val unsentEvents = dao.getPendingSyncEvents().isNotEmpty()
-            if (unsentReadings || unsentPayments || unsentEvents) {
-                throw IllegalStateException(
-                    "لا يمكن تبديل الحساب أو الفرع: توجد عمليات ميدانية غير متزامنة تخص الحساب السابق. أعد الدخول بالحساب السابق وأكمل المزامنة أولاً."
-                )
-            }
-            dao.clearAllSubscribers()
-            prefs.edit().remove("last_subscriber_refresh_at").apply()
+        // Never delete another account's Room data or pending outbox. The v8
+        // cache is attributed only when the previous account+tenant+site
+        // identity is independently proven; otherwise it stays quarantined.
+        val ownerPrefs=context.getSharedPreferences("field_cache_owner",Context.MODE_PRIVATE)
+        val newBranchId=session.user.branchIds.firstOrNull()?:-1L
+        require(newBranchId>0L) { "لا يوجد فرع مصرح به للتطبيق الميداني." }
+        val newOwner="${session.user.tenantId}:${session.user.id}:$newBranchId"
+        val previousOwner=ownerPrefs.getString("owner",null)
+        val previousUserId=prefs.getLong("profile_user_id",-1L)
+        val previousTenantId=prefs.getLong("profile_tenant_id",-1L)
+        val previousBranchId=prefs.getLong("active_branch_id",-1L)
+        val knownSameOwner=previousOwner==newOwner || (
+            previousOwner==null && previousUserId==session.user.id &&
+            previousTenantId==session.user.tenantId && previousBranchId==newBranchId
+        )
+        val legacyUnsent=dao.legacyUnsentReadingCount()+dao.legacyUnsentPaymentCount()+
+            dao.legacySyncEventCount()
+        if(!knownSameOwner && legacyUnsent>0){
+            throw IllegalStateException(
+                "هناك عمليات قديمة بلا هوية موثقة محفوظة بأمان. سجل الدخول بالحساب السابق لاستردادها قبل تبديل الحساب."
+            )
         }
+        if(knownSameOwner)dao.claimVerifiedLegacyScope(newOwner)
+        val checkpoint=dao.getLatestCompletedSyncState(newOwner)
+        val hasLegacy=dao.visibleSubscriberCount(newOwner,"legacy-seeded")>0
+        dao.setActiveScope(com.example.data.MobileActiveScopeEntity(
+            scopeKey=newOwner,
+            scopeVersion=checkpoint?.scopeVersion?:if(hasLegacy)"legacy-seeded" else "not-bootstrapped",
+            status=if(checkpoint!=null || hasLegacy)"ready" else "bootstrapping",
+        ))
+        if(!knownSameOwner)prefs.edit().remove("last_subscriber_refresh_at").apply()
         ownerPrefs.edit().putString("owner", newOwner).apply()
         sessionStore.save(session)
         prefs.edit().apply {
@@ -262,7 +269,10 @@ class FieldReadingRepository(
         prefs.edit().putBoolean("must_change_password", false).apply()
     }
 
-    fun clearSession() {
+    suspend fun clearSession() {
+        // Atomic identity deactivation in Room occurs before removing the
+        // credentials: no cached subscriber from another account is displayed.
+        dao.clearActiveScope()
         sessionStore.clear()
         prefs.edit().clear().apply()
     }
