@@ -315,11 +315,27 @@ class FieldReadingRepository(
         runCatching {
         ensureActiveAccessToken()
         val profile = api.getProfile().user
-        val branchId = activeBranchId().takeIf { it in profile.branchIds } ?: profile.branchIds.firstOrNull()
-            ?: throw IllegalStateException("لا توجد فروع ميدانية مسموحة لهذا الحساب.")
-        prefs.edit().putLong("active_branch_id", branchId).apply()
+        val branchId = activeBranchId()
+        require(branchId > 0L && branchId in profile.branchIds) {
+            "الفرع الحالي غير مصرح به لهذا الحساب؛ أعد تسجيل الدخول لتحديث نطاق البيانات."
+        }
         val cycleRange = refreshReadingCycleConfiguration().getOrThrow()
-        val allItems = buildList { var cursor: String? = null; do { val response = api.getSubscribers(branchId, 100, cursor); addAll(response.items); cursor = response.nextCursor } while (!cursor.isNullOrBlank()) }
+        val seenCursors = mutableSetOf<String>()
+        val allItems = buildList {
+            var cursor: String? = null
+            do {
+                val response = api.getSubscribers(branchId, 100, cursor)
+                require(response.items.all { it.branchId == branchId }) {
+                    "استجابة المشتركين تحتوي على بيانات من فرع آخر؛ لم تُعدل البيانات المحلية."
+                }
+                addAll(response.items)
+                val next = response.nextCursor?.takeIf { it.isNotBlank() }
+                require(next == null || seenCursors.add(next)) {
+                    "اكتشفت حلقة في صفحات المشتركين؛ تم الاحتفاظ بالنسخة المحلية السابقة."
+                }
+                cursor = next
+            } while (cursor != null)
+        }
         require(allItems.isNotEmpty()) { "رفض تحديث قائمة المشتركين بقائمة فارغة؛ البيانات المحلية محفوظة." }
         require(allItems.map { it.id }.distinct().size == allItems.size) { "استجابة المشتركين تحتوي على تكرارات؛ لم تُعدل البيانات المحلية." }
         dao.replaceSubscribersSnapshot(allItems.map { item ->
