@@ -377,8 +377,9 @@ class FieldReadingRepository(
             // Persisted pending bootstrap takes precedence over the last full
             // checkpoint, even after a process crash between Delta pages.
             val pending=dao.getIncompleteBootstrapState(scopeKey)
+            val inProgressDelta=dao.getIncompleteDeltaState(scopeKey)
             val complete=dao.getLatestCompletedSyncState(scopeKey)
-            var cursor=pending?.cursor?:complete?.cursor
+            var cursor=pending?.cursor?:inProgressDelta?.cursor?:complete?.cursor
             var needsBootstrap=cursor==null
             var restarted=false
             val seenCursors=mutableSetOf<String>()
