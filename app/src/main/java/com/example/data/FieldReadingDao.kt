@@ -159,6 +159,12 @@ interface FieldReadingDao {
     @Query("DELETE FROM mobile_sync_states WHERE scopeKey=:scopeKey AND mode='bootstrap' AND completed=0")
     suspend fun forgetIncompleteBootstrap(scopeKey: String)
 
+    @Query("DELETE FROM mobile_sync_states WHERE scopeKey=:scopeKey AND completed=0 AND mode='delta'")
+    suspend fun forgetIncompleteDelta(scopeKey: String)
+
+    @Query("DELETE FROM mobile_sync_states WHERE scopeKey=:scopeKey AND completed=0 AND scopeVersion<>:scopeVersion")
+    suspend fun forgetOtherIncompleteScopes(scopeKey: String,scopeVersion: String)
+
     @Query("DELETE FROM mobile_active_scope")
     suspend fun clearActiveScope()
 
@@ -170,9 +176,10 @@ interface FieldReadingDao {
         ORDER BY lastAppliedAt DESC LIMIT 1""")
     suspend fun getLatestCompletedSyncState(scopeKey: String): MobileSyncStateEntity?
 
-    @Query("""SELECT * FROM mobile_sync_states WHERE scopeKey=:scopeKey AND mode='delta'
+    @Query("""SELECT * FROM mobile_sync_states WHERE scopeKey=:scopeKey
+        AND scopeVersion=:scopeVersion AND mode='delta'
         AND completed=0 ORDER BY lastAppliedAt DESC LIMIT 1""")
-    suspend fun getIncompleteDeltaState(scopeKey: String): MobileSyncStateEntity?
+    suspend fun getIncompleteDeltaState(scopeKey: String,scopeVersion: String): MobileSyncStateEntity?
 
     @Query("""SELECT * FROM mobile_sync_states WHERE scopeKey=:scopeKey AND mode='bootstrap'
         AND completed=0 ORDER BY lastAppliedAt DESC LIMIT 1""")
@@ -275,6 +282,7 @@ interface FieldReadingDao {
             if(!hasMore) {
                 hideOldScopeVersion(scopeKey,scopeVersion)
                 hideMissingBootstrapRows(scopeKey,scopeVersion,marker!!)
+                forgetOtherIncompleteScopes(scopeKey,scopeVersion)
                 setActiveScope(active.copy(scopeVersion=scopeVersion,status="ready"))
             } else {
                 setActiveScope(active.copy(scopeVersion=scopeVersion,status="bootstrapping"))
