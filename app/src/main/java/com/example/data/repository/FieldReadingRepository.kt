@@ -588,7 +588,7 @@ class FieldReadingRepository(
             }
             check(event.branchId==activeBranchId()) { "أوقفت إرسال حدث من نطاق فرع آخر." }
             api.createSyncEvent(MobileSyncEventRequest(event.eventKey, event.branchId, event.eventType, event.status, event.syncedCount, event.retryableCount, event.needsReviewCount, event.errorCode, event.errorMessage, BuildConfig.VERSION_NAME, deviceLabel(), epochToUtc(event.createdAt)))
-            dao.deletePendingSyncEvent(event.localId)
+            dao.deleteScopedPendingSyncEvent(event.localId,scopeKey)
         }
     }
 
