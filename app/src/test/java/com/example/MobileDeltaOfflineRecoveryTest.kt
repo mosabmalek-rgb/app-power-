@@ -21,6 +21,9 @@ import org.robolectric.annotation.Config
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [36])
 class MobileDeltaOfflineRecoveryTest {
+    private inline fun <T> FieldReadingDatabase.withClosed(block: (FieldReadingDatabase) -> T): T =
+        try { block(this) } finally { close() }
+
     private val scope = "10:7:101"
     private val other = "20:8:101"
     private val revision = "a".repeat(64)
@@ -44,7 +47,7 @@ class MobileDeltaOfflineRecoveryTest {
         context.deleteDatabase(name)
         val yesterday=System.currentTimeMillis()-26L*60*60*1000
         try {
-            open(context,name).use { db ->
+            open(context,name).withClosed { db ->
                 val dao=db.dao()
                 dao.setActiveScope(MobileActiveScopeEntity(scopeKey=scope,
                     scopeVersion="not-bootstrapped",status="bootstrapping"))
@@ -58,7 +61,7 @@ class MobileDeltaOfflineRecoveryTest {
                     notes="",status="pending",clientReferenceId="payment-1001",scopeKey=scope))
             }
             // No network call is possible here; all assertions use restored Room.
-            open(context,name).use { db ->
+            open(context,name).withClosed { db ->
                 val dao=db.dao()
                 assertEquals("delta-42",dao.getLatestCompletedSyncState(scope)?.cursor)
                 assertEquals("delta",dao.getLatestCompletedSyncState(scope)?.mode)
@@ -77,7 +80,7 @@ class MobileDeltaOfflineRecoveryTest {
         val name="e51-network-phase-recovery-test.db"
         context.deleteDatabase(name)
         try {
-            open(context,name).use { db ->
+            open(context,name).withClosed { db ->
                 val dao=db.dao()
                 dao.setActiveScope(MobileActiveScopeEntity(scopeKey=scope,
                     scopeVersion="not-bootstrapped",status="bootstrapping"))
@@ -104,14 +107,14 @@ class MobileDeltaOfflineRecoveryTest {
                 assertNull(dao.getSubscriberByIdFlow("1002").first())
                 assertEquals("page-1",dao.getSyncState(scope,revision)?.cursor)
             }
-            open(context,name).use { db ->
+            open(context,name).withClosed { db ->
                 val dao=db.dao()
                 assertEquals("page-1",dao.getSyncState(scope,revision)?.cursor)
                 dao.applyMobileDeltaPage(scope,revision,"101","delta",
                     listOf(sub("1002")),emptyList(),"page-2",true,3000L)
                 assertEquals("page-2",dao.getIncompleteDeltaState(scope,revision)?.cursor)
             }
-            open(context,name).use { db ->
+            open(context,name).withClosed { db ->
                 val dao=db.dao()
                 // Interruption after commit: stored cursor is page-2.
                 assertEquals("page-2",dao.getIncompleteDeltaState(scope,revision)?.cursor)
@@ -136,7 +139,7 @@ class MobileDeltaOfflineRecoveryTest {
     @Test fun `1000 cached subscribers apply and delta delete retains offline outbox`() = runBlocking {
         val context=ApplicationProvider.getApplicationContext<Context>()
         Room.inMemoryDatabaseBuilder(context,FieldReadingDatabase::class.java)
-            .allowMainThreadQueries().build().use { db ->
+            .allowMainThreadQueries().build().withClosed { db ->
                 val dao=db.dao()
                 dao.setActiveScope(MobileActiveScopeEntity(scopeKey=scope,
                     scopeVersion="not-bootstrapped",status="bootstrapping"))
