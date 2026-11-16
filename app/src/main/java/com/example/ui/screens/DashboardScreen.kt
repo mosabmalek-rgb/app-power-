@@ -68,6 +68,7 @@ fun DashboardScreen(
     val currentCycleRange by viewModel.currentCycleRange.collectAsState()
     val isSyncing by viewModel.isSyncing.collectAsState()
     val isOnline by viewModel.isOnline.collectAsState()
+    val lastSubscriberRefreshAt by viewModel.lastSubscriberRefreshAt.collectAsState()
     val syncProgress by viewModel.syncProgress.collectAsState()
     val syncStatusMessage by viewModel.syncStatusMessage.collectAsState()
 
@@ -356,6 +357,25 @@ fun DashboardScreen(
                                     }
                                 }
                             }
+                        }
+
+                        // Existing dashboard doubles as the field readiness indicator.
+                        if (subscribers.isEmpty() || lastSubscriberRefreshAt <= 0L) {
+                            Text(
+                                text = "تنبيه: بيانات المشتركين غير جاهزة للعمل دون إنترنت",
+                                color = Color.White,
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.Bold
+                            )
+                        } else {
+                            val refreshedAt = java.text.SimpleDateFormat("yyyy-MM-dd HH:mm", java.util.Locale.US)
+                                .apply { timeZone = java.util.TimeZone.getTimeZone("Asia/Gaza") }
+                                .format(java.util.Date(lastSubscriberRefreshAt))
+                            Text(
+                                text = "آخر تحديث للمشتركين: $refreshedAt",
+                                color = Color.White.copy(alpha = 0.92f),
+                                fontSize = 10.sp
+                            )
                         }
 
                         // Connectivity badge matching tailwind style
