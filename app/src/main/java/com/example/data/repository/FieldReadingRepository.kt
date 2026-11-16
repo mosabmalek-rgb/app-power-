@@ -318,70 +318,158 @@ class FieldReadingRepository(
         return true
     }
 
-    private val subscriberRefreshMutex = kotlinx.coroutines.sync.Mutex()
+    // All Repository instances (foreground + WorkManager) share this lock.
+    // Database transactions protect checkpoints across process crashes.
+    private companion object {
+        val subscriberRefreshMutex = kotlinx.coroutines.sync.Mutex()
+        const val MAX_DELTA_PAGES_PER_RUN = 500
+    }
+
+    private fun currentScopeKey(): String {
+        val tenantId=prefs.getLong("profile_tenant_id",-1L)
+        val userId=currentProfileUserId()?:-1L
+        val branchId=activeBranchId()
+        check(tenantId>0L && userId>0L && branchId>0L)
+        return "$" + "{tenantId}:$" + "{userId}:$" + "{branchId}"
+    }
 
     private fun requireLocalOwner() {
-        val tenantId = prefs.getLong("profile_tenant_id", -1L)
-        val userId = currentProfileUserId() ?: -1L
-        val branchId = activeBranchId()
-        val expected = "$tenantId:$userId:$branchId"
-        val recorded = context.getSharedPreferences("field_cache_owner", Context.MODE_PRIVATE)
-            .getString("owner", null)
-        check(tenantId > 0L && userId > 0L && branchId > 0L && recorded == expected) {
+        val expected=currentScopeKey()
+        val recorded=context.getSharedPreferences("field_cache_owner",Context.MODE_PRIVATE)
+            .getString("owner",null)
+        check(recorded==expected) {
             "بيانات هذا الجهاز تخص حساباً أو فرعاً آخر. أعد تسجيل الدخول قبل العمل الميداني."
         }
     }
 
-    fun lastSubscriberRefreshAt(): Long = prefs.getLong("last_subscriber_refresh_at", 0L)
+    fun lastSubscriberRefreshAt(): Long=prefs.getLong("last_subscriber_refresh_at",0L)
 
-    suspend fun refreshSubscribersIfStale(maxAgeMillis: Long = 2 * 60 * 60 * 1000L): Result<Unit> {
-        if (!isLoggedIn()) return Result.success(Unit)
+    suspend fun refreshSubscribersIfStale(maxAgeMillis: Long=2*60*60*1000L): Result<Unit> {
+        if(!isLoggedIn())return Result.success(Unit)
         requireLocalOwner()
-        val last = prefs.getLong("last_subscriber_refresh_at", 0L)
-        if (last > 0 && System.currentTimeMillis() - last in 0 until maxAgeMillis) return Result.success(Unit)
+        val last=lastSubscriberRefreshAt()
+        if(last>0 && System.currentTimeMillis()-last in 0 until maxAgeMillis)
+            return Result.success(Unit)
         return refreshSubscribers()
     }
 
     suspend fun refreshSubscribers(): Result<Unit> = subscriberRefreshMutex.withLock {
         runCatching {
-        requireLocalOwner()
-        ensureActiveAccessToken()
-        val profile = api.getProfile().user
-        val branchId = activeBranchId()
-        require(branchId > 0L && branchId in profile.branchIds) {
-            "الفرع الحالي غير مصرح به لهذا الحساب؛ أعد تسجيل الدخول لتحديث نطاق البيانات."
-        }
-        val cycleRange = refreshReadingCycleConfiguration().getOrThrow()
-        val seenCursors = mutableSetOf<String>()
-        val allItems = buildList {
-            var cursor: String? = null
-            do {
-                val response = api.getSubscribers(branchId, 100, cursor)
-                require(response.items.all { it.branchId == branchId }) {
-                    "استجابة المشتركين تحتوي على بيانات من فرع آخر؛ لم تُعدل البيانات المحلية."
+            requireLocalOwner()
+            ensureActiveAccessToken()
+            val profile=api.getProfile().user
+            val branchId=activeBranchId()
+            val scopeKey=currentScopeKey()
+            val tenantId=prefs.getLong("profile_tenant_id",-1L)
+            val userId=currentProfileUserId()?:-1L
+            require(profile.id==userId && profile.tenantId==tenantId &&
+                branchId>0L && branchId in profile.branchIds) {
+                "تغير نطاق الحساب أو الفرع؛ توقفت المزامنة لحماية البيانات المحلية."
+            }
+            val active=dao.getActiveScope()
+            require(active?.scopeKey==scopeKey) {
+                "نطاق قاعدة البيانات لا يطابق الحساب المسجل."
+            }
+            // Persisted pending bootstrap takes precedence over the last full
+            // checkpoint, even after a process crash between Delta pages.
+            val pending=dao.getIncompleteBootstrapState(scopeKey)
+            val complete=dao.getLatestCompletedSyncState(scopeKey)
+            var cursor=pending?.cursor?:complete?.cursor
+            var needsBootstrap=cursor==null
+            var restarted=false
+            val seenCursors=mutableSetOf<String>()
+            var pages=0
+            var totalTransferred=0
+            while(true) {
+                require(pages++<MAX_DELTA_PAGES_PER_RUN) {
+                    "تجاوزت المزامنة الحد الآمن للصفحات؛ المؤشر المحفوظ لم يتقدم دون معاملة Room."
                 }
-                addAll(response.items)
-                val next = response.nextCursor?.takeIf { it.isNotBlank() }
-                require(next == null || seenCursors.add(next)) {
-                    "اكتشفت حلقة في صفحات المشتركين؛ تم الاحتفاظ بالنسخة المحلية السابقة."
+                val response=try {
+                    api.getSubscribersDelta(branchId,100,cursor,if(needsBootstrap)true else null)
+                } catch(e:HttpException) {
+                    val code=parseServerApiError(e)?.code
+                    if(e.code() in listOf(400,409) &&
+                        code in setOf("CURSOR_EXPIRED","CURSOR_SCOPE_CHANGED",
+                            "CURSOR_INVALID","BOOTSTRAP_REQUIRED") && !restarted) {
+                        // Server invalidated the previous scope/cursor. Keep
+                        // pending work and quarantine the old subscriber view.
+                        dao.quarantineActiveScope(scopeKey)
+                        dao.forgetIncompleteBootstrap(scopeKey)
+                        cursor=null
+                        needsBootstrap=true
+                        restarted=true
+                        continue
+                    }
+                    throw e
                 }
-                cursor = next
-            } while (cursor != null)
-        }
-        require(allItems.isNotEmpty()) { "رفض تحديث قائمة المشتركين بقائمة فارغة؛ البيانات المحلية محفوظة." }
-        require(allItems.map { it.id }.distinct().size == allItems.size) { "استجابة المشتركين تحتوي على تكرارات؛ لم تُعدل البيانات المحلية." }
-        dao.replaceSubscribersSnapshot(allItems.map { item ->
-            val cycleReading = item.currentCycleReading
-            SubscriberEntity(
-                id = item.id.toString(), refNumber = item.subscriberNo, name = item.fullName, phone = item.phone,
-                address = item.address ?: "", branchId = item.branchId.toString(),
-                lastReading = item.lastReading?.toDoubleOrNull() ?: 0.0, lastReadingDate = item.lastReadingAt ?: "", balance = 0.0,
-                hasReadingInCurrentCycle = item.hasReadingInCurrentCycle,
-                cycleReadingValue = cycleReading?.readingValue, cycleReadingAt = cycleReading?.readingAt,
-                cycleReadingStatus = cycleReading?.status, currentCycleKey = if (item.hasReadingInCurrentCycle) cycleRange.cycleKey else null
-            )
-        })
-        prefs.edit().putLong("last_subscriber_refresh_at", System.currentTimeMillis()).apply()
+                require(!response.requiresBootstrap) {
+                    "رفض الخادم استمرارية نطاق المزامنة؛ لم يُحدّث المؤشر المحلي."
+                }
+                require(response.tenantId==tenantId && response.userId==userId &&
+                    response.branchId==branchId &&
+                    response.scopeVersion.length==64 &&
+                    response.scopeVersion.all { it in '0'..'9' || it in 'a'..'f' }) {
+                    "استجابة Delta لا تطابق هوية المستأجر أو الفني أو الفرع."
+                }
+                require(response.mode in listOf("bootstrap","delta")) {
+                    "طور المزامنة غير موثوق."
+                }
+                if(needsBootstrap)require(response.mode=="bootstrap") {
+                    "رفض تطبيق Delta قبل تهيئة كاملة."
+                }
+                require(response.nextCursor.isNotBlank() && response.nextCursor.length<=2048)
+                require(!response.hasMore || (response.nextCursor!=cursor &&
+                    seenCursors.add(response.nextCursor))) {
+                    "حُلقة أو تكرار في المؤشرات؛ لم يتم تجاوز آخر صفحة مثبتة."
+                }
+                require(response.upserts.all { it.branchId==branchId }) {
+                    "احتوت صفحة Delta على بيانات فرع آخر؛ لن تطبق محلياً."
+                }
+                val cycle=response.currentCycle
+                require(cycle.key.isNotBlank() && cycle.startAt.isNotBlank() &&
+                    cycle.endAt.isNotBlank()) {
+                    "بيانات دورة القراءة غير مكتملة."
+                }
+                val serverTime=java.time.Instant.parse(response.serverTime).toEpochMilli()
+                val upserts=response.upserts.map { item ->
+                    val reading=item.currentCycleReading
+                    com.example.data.SubscriberEntity(
+                        id=item.id.toString(),
+                        refNumber=item.subscriberNo,
+                        name=item.fullName,
+                        phone=item.phone,
+                        address=item.address?:"",
+                        branchId=branchId.toString(),
+                        lastReading=item.lastReading?.toDoubleOrNull()?:0.0,
+                        lastReadingDate=item.lastReadingAt?:"",
+                        balance=0.0,
+                        hasReadingInCurrentCycle=item.hasReadingInCurrentCycle,
+                        cycleReadingValue=reading?.readingValue,
+                        cycleReadingAt=reading?.readingAt,
+                        cycleReadingStatus=reading?.status,
+                        currentCycleKey=if(item.hasReadingInCurrentCycle)cycle.key else null,
+                        scopeKey=scopeKey,scopeVersion=response.scopeVersion,
+                    )
+                }
+                val deletes=response.deletes.map { value ->
+                    require(value>0L) { "معرف حذف Delta غير صالح." }
+                    value.toString()
+                }
+                // Data changes and the only resumable cursor are in ONE Room
+                // transaction. Failure before/within it cannot advance state.
+                dao.applyMobileDeltaPage(scopeKey,response.scopeVersion,
+                    branchId.toString(),response.mode,upserts,deletes,
+                    response.nextCursor,response.hasMore,serverTime)
+                totalTransferred+=upserts.size+deletes.size
+                cursor=response.nextCursor
+                needsBootstrap=false
+                if(!response.hasMore) {
+                    prefs.edit().putLong("last_subscriber_refresh_at",serverTime).apply()
+                    break
+                }
+            }
+            android.util.Log.d("PowerHubSync",
+                "Delta complete; pages=$" + "pages records=$" + "totalTransferred")
         }
     }
 
