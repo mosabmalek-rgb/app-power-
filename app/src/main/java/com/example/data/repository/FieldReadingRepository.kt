@@ -274,7 +274,17 @@ class FieldReadingRepository(
         return true
     }
 
-    suspend fun refreshSubscribers(): Result<Unit> = runCatching {
+    private val subscriberRefreshMutex = kotlinx.coroutines.sync.Mutex()
+
+    suspend fun refreshSubscribersIfStale(maxAgeMillis: Long = 2 * 60 * 60 * 1000L): Result<Unit> {
+        if (!isLoggedIn()) return Result.success(Unit)
+        val last = prefs.getLong("last_subscriber_refresh_at", 0L)
+        if (last > 0 && System.currentTimeMillis() - last in 0 until maxAgeMillis) return Result.success(Unit)
+        return refreshSubscribers()
+    }
+
+    suspend fun refreshSubscribers(): Result<Unit> = subscriberRefreshMutex.withLock {
+        runCatching {
         ensureActiveAccessToken()
         val profile = api.getProfile().user
         val branchId = activeBranchId().takeIf { it in profile.branchIds } ?: profile.branchIds.firstOrNull()
@@ -282,6 +292,8 @@ class FieldReadingRepository(
         prefs.edit().putLong("active_branch_id", branchId).apply()
         val cycleRange = refreshReadingCycleConfiguration().getOrThrow()
         val allItems = buildList { var cursor: String? = null; do { val response = api.getSubscribers(branchId, 100, cursor); addAll(response.items); cursor = response.nextCursor } while (!cursor.isNullOrBlank()) }
+        require(allItems.isNotEmpty()) { "رفض تحديث قائمة المشتركين بقائمة فارغة؛ البيانات المحلية محفوظة." }
+        require(allItems.map { it.id }.distinct().size == allItems.size) { "استجابة المشتركين تحتوي على تكرارات؛ لم تُعدل البيانات المحلية." }
         dao.replaceSubscribersSnapshot(allItems.map { item ->
             val cycleReading = item.currentCycleReading
             SubscriberEntity(
@@ -293,6 +305,8 @@ class FieldReadingRepository(
                 cycleReadingStatus = cycleReading?.status, currentCycleKey = if (item.hasReadingInCurrentCycle) cycleRange.cycleKey else null
             )
         })
+        prefs.edit().putLong("last_subscriber_refresh_at", System.currentTimeMillis()).apply()
+        }
     }
 
     suspend fun syncAllData(onProgress: (Int, String) -> Unit): Result<SyncSummary> {

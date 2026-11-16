@@ -20,11 +20,31 @@ interface FieldReadingDao {
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertSubscribers(subscribers: List<SubscriberEntity>)
 
+    // Apply a fully downloaded snapshot atomically; keep records referenced by local work.
     @Transaction
     suspend fun replaceSubscribersSnapshot(subscribers: List<SubscriberEntity>) {
-        clearAllSubscribers()
+        if (subscribers.map { it.id }.toSet().size != subscribers.size) {
+            throw IllegalArgumentException("Duplicate subscriber IDs in server snapshot")
+        }
+        if (subscribers.isEmpty()) {
+            throw IllegalArgumentException("Refusing to replace subscriber cache with an empty snapshot")
+        }
         insertSubscribers(subscribers)
+        val receivedIds = subscribers.map { it.id }.toSet()
+        getAllSubscriberIds().filterNot { it in receivedIds }.forEach { id ->
+            deleteSubscriberWithoutLocalWork(id)
+        }
     }
+
+    @Query("SELECT id FROM subscribers")
+    suspend fun getAllSubscriberIds(): List<String>
+
+    @Query("""
+        DELETE FROM subscribers WHERE id = :id
+        AND NOT EXISTS (SELECT 1 FROM pending_readings WHERE subscriberId = :id)
+        AND NOT EXISTS (SELECT 1 FROM pending_payments WHERE subscriberId = :id)
+    """)
+    suspend fun deleteSubscriberWithoutLocalWork(id: String)
 
     @Query("SELECT * FROM pending_readings ORDER BY createdAt DESC")
     fun getAllPendingReadingsFlow(): Flow<List<PendingReadingEntity>>
