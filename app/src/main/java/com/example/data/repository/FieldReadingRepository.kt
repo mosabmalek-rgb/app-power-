@@ -326,6 +326,7 @@ class FieldReadingRepository(
     // Database transactions protect checkpoints across process crashes.
     private companion object {
         val subscriberRefreshMutex = kotlinx.coroutines.sync.Mutex()
+        val pendingSendMutex = kotlinx.coroutines.sync.Mutex()
         const val MAX_DELTA_PAGES_PER_RUN = 500
     }
 
@@ -493,7 +494,7 @@ class FieldReadingRepository(
         }
     }
 
-    suspend fun syncAllData(onProgress: (Int, String) -> Unit): Result<SyncSummary> {
+    suspend fun syncAllData(onProgress: (Int, String) -> Unit): Result<SyncSummary> = pendingSendMutex.withLock {
         requireSubscriptionForOffline()
         requireLocalOwner()
         val outcome = runCatching {
@@ -536,16 +537,16 @@ class FieldReadingRepository(
                     }
                     val response = api.createReading(MobileReadingRequest(reading.clientReferenceId, branchId, reading.subscriberId.toLong(), ReadingValuePrecision.normalizeForSync(reading.currentReading, reading.readingValueText)
                         ?: throw PermanentSyncException("القراءة يجب أن تكون رقماً صحيحاً أو تحتوي على منزلة أو منزلتين عشريتين كحد أقصى."), localDateToUtc(reading.readingDate), if (image == null) "manual" else "photo", reading.isReadingReset, reading.fieldVerified, reading.latitude.takeIf { it != 0.0 }, reading.longitude.takeIf { it != 0.0 }, image?.first, image?.second, reading.notes.ifBlank { null }))
-                    if (response.id > 0) { dao.updateReadingSyncState(reading.localId, "synced", reading.retryCount, null, System.currentTimeMillis()); synced++ }
+                    if (response.id > 0) { dao.updateScopedReadingSyncState(reading.localId,scopeKey, "synced", reading.retryCount, null, System.currentTimeMillis()); synced++ }
                     else {
                         val message = "رفض الخادم تأكيد القراءة؛ ستُعاد المحاولة تلقائياً."
-                        dao.updateReadingSyncState(reading.localId, "retryable", reading.retryCount + 1, message, System.currentTimeMillis())
+                        dao.updateScopedReadingSyncState(reading.localId,scopeKey, "retryable", reading.retryCount + 1, message, System.currentTimeMillis())
                         queueSyncEvent(branchId, "sync_error", "retryable", SyncSummary(0, 1, 0), "READING_SYNC_UNCONFIRMED", message)
                         retryable++
                     }
                 } catch (error: Exception) {
                     val issue = classifySyncFailure(error)
-                    dao.updateReadingSyncState(reading.localId, issue.status, reading.retryCount + 1, issue.message, System.currentTimeMillis())
+                    dao.updateScopedReadingSyncState(reading.localId,scopeKey, issue.status, reading.retryCount + 1, issue.message, System.currentTimeMillis())
                     val diagnosticCode = issue.errorCode
                         ?: if (issue.status == "needs_review") "READING_SYNC_REVIEW" else "READING_SYNC_RETRY"
                     queueSyncEvent(branchId, "sync_error", issue.status, SyncSummary(0, if (issue.status == "needs_review") 0 else 1, if (issue.status == "needs_review") 1 else 0), diagnosticCode, issue.message)
