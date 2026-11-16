@@ -276,6 +276,9 @@ class FieldReadingRepository(
         requireSubscriptionForOffline()
         requireLocalOwner()
         val subscriber = dao.getSubscriberById(subscriberId) ?: return Result.failure(Exception("لم يتم العثور على بيانات هذا المشترك على الجهاز."))
+        if (subscriber.branchId != activeBranchId().toString()) {
+            return Result.failure(IllegalStateException("هذا المشترك لا ينتمي إلى الفرع المصرح به على الجهاز."))
+        }
         val normalizedReadingText = ReadingValuePrecision.normalizeForSync(currentReading, readingValueText)
             ?: return Result.failure(Exception("القراءة يجب أن تكون رقماً صحيحاً أو تحتوي على منزلة أو منزلتين عشريتين كحد أقصى."))
         if (!isReadingReset && currentReading < subscriber.lastReading) return Result.failure(Exception("القراءة الحالية يجب أن تكون أكبر من أو تساوي القراءة السابقة."))
@@ -299,6 +302,8 @@ class FieldReadingRepository(
     suspend fun savePayment(subscriberId: String, amount: Double, paymentMethod: String, notes: String): Boolean {
         if (amount <= 0) return false
         requireLocalOwner()
+        val subscriber = dao.getSubscriberById(subscriberId) ?: return false
+        if (subscriber.branchId != activeBranchId().toString()) return false
         dao.insertPendingPayment(PendingPaymentEntity(subscriberId = subscriberId, amount = amount, paymentMethod = paymentMethod, notes = notes, status = "pending"))
         return true
     }
@@ -321,6 +326,7 @@ class FieldReadingRepository(
 
     suspend fun refreshSubscribersIfStale(maxAgeMillis: Long = 2 * 60 * 60 * 1000L): Result<Unit> {
         if (!isLoggedIn()) return Result.success(Unit)
+        requireLocalOwner()
         val last = prefs.getLong("last_subscriber_refresh_at", 0L)
         if (last > 0 && System.currentTimeMillis() - last in 0 until maxAgeMillis) return Result.success(Unit)
         return refreshSubscribers()
@@ -387,6 +393,16 @@ class FieldReadingRepository(
             var retryable = 0
             var needsReview = 0
             readings.forEachIndexed { index, reading ->
+                val localSubscriber = dao.getSubscriberById(reading.subscriberId)
+                if (localSubscriber == null || localSubscriber.branchId != branchId.toString()) {
+                    dao.updateReadingSyncState(
+                        reading.localId, "needs_review", reading.retryCount,
+                        "القراءة تخص مشتركاً غير موجود في الفرع الحالي؛ أُوقف إرسالها لحماية عزل البيانات.",
+                        System.currentTimeMillis()
+                    )
+                    needsReview++
+                    return@forEachIndexed
+                }
                 onProgress(((index * 100) / readings.size).coerceAtLeast(5), "جارٍ إرسال قراءة ${index + 1} من ${readings.size}…")
                 try {
                     dao.updateReadingSyncState(reading.localId, "syncing", reading.retryCount, null, System.currentTimeMillis())
