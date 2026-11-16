@@ -469,6 +469,12 @@ class FieldReadingRepository(
                 cursor=response.nextCursor
                 needsBootstrap=false
                 if(!response.hasMore) {
+                    // A subscriber or reading may have changed while the
+                    // bootstrap pages were being downloaded. The signed final
+                    // bootstrap cursor starts Delta at the frozen high-water:
+                    // immediately reconcile subsequent changes before marking
+                    // this refresh complete.
+                    if(response.mode=="bootstrap")continue
                     prefs.edit().putLong("last_subscriber_refresh_at",serverTime).apply()
                     break
                 }
