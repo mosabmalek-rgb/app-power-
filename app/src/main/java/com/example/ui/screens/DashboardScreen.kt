@@ -360,7 +360,7 @@ fun DashboardScreen(
                         }
 
                         // Existing dashboard doubles as the field readiness indicator.
-                        if (subscribers.isEmpty() || lastSubscriberRefreshAt <= 0L) {
+                        if (lastSubscriberRefreshAt <= 0L) {
                             Text(
                                 text = "تنبيه: بيانات المشتركين غير جاهزة للعمل دون إنترنت",
                                 color = Color.White,
@@ -372,7 +372,9 @@ fun DashboardScreen(
                                 .apply { timeZone = java.util.TimeZone.getTimeZone("Asia/Gaza") }
                                 .format(java.util.Date(lastSubscriberRefreshAt))
                             Text(
-                                text = "آخر تحديث للمشتركين: $refreshedAt",
+                                text = if (subscribers.isEmpty())
+                                    "لا يوجد مشتركون متاحون لهذا الحساب والفرع — آخر تحقق: $refreshedAt"
+                                    else "آخر تحديث للمشتركين: $refreshedAt",
                                 color = Color.White.copy(alpha = 0.92f),
                                 fontSize = 10.sp
                             )
