@@ -140,6 +140,12 @@ interface FieldReadingDao {
     @Insert(onConflict=OnConflictStrategy.REPLACE)
     suspend fun setActiveScope(value: MobileActiveScopeEntity)
 
+    @Query("UPDATE mobile_active_scope SET status='bootstrapping' WHERE scopeKey=:scopeKey")
+    suspend fun quarantineActiveScope(scopeKey: String)
+
+    @Query("DELETE FROM mobile_sync_states WHERE scopeKey=:scopeKey AND mode='bootstrap' AND completed=0")
+    suspend fun forgetIncompleteBootstrap(scopeKey: String)
+
     @Query("DELETE FROM mobile_active_scope")
     suspend fun clearActiveScope()
 
