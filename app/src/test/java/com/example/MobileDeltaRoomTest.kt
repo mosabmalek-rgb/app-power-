@@ -111,6 +111,37 @@ class MobileDeltaRoomTest {
         } finally { db.close() }
     }
 
+    @Test fun `single subscriber lookups and acknowledgments cannot cross tenant scope`() = runBlocking {
+        val context=ApplicationProvider.getApplicationContext<Context>()
+        val db=Room.inMemoryDatabaseBuilder(context,FieldReadingDatabase::class.java)
+            .allowMainThreadQueries().build()
+        val dao=db.dao()
+        val a="10:7:101"
+        val b="20:8:101"
+        val version="e".repeat(64)
+        try {
+            dao.setActiveScope(MobileActiveScopeEntity(scopeKey=a,scopeVersion=version,status="ready"))
+            dao.insertSubscribers(listOf(
+                subscriber("1001",a,version).copy(name="Tenant A"),
+                subscriber("1001",b,version).copy(name="Tenant B")
+            ))
+            assertEquals("Tenant A",dao.getSubscriberByIdFlow("1001").first()?.name)
+            val readingA=dao.insertPendingReading(unsent("1001",a))
+            val readingB=dao.insertPendingReading(unsent("1001",b))
+            assertEquals(0,dao.updateScopedReadingSyncState(
+                readingB.toInt(),a,"synced",0,null,System.currentTimeMillis()
+            ))
+            assertEquals(1,dao.updateScopedReadingSyncState(
+                readingA.toInt(),a,"synced",0,null,System.currentTimeMillis()
+            ))
+            assertEquals(1,dao.getScopedPendingReadingsWithStatus(b,"pending").size)
+            dao.setActiveScope(MobileActiveScopeEntity(scopeKey=b,scopeVersion=version,status="ready"))
+            assertEquals("Tenant B",dao.getSubscriberByIdFlow("1001").first()?.name)
+            dao.clearActiveScope()
+            assertNull(dao.getSubscriberByIdFlow("1001").first())
+        } finally { db.close() }
+    }
+
     @Test fun `Room 8 to 9 upgrade preserves legacy subscribers readings payments and events without showing unknown owner`() = runBlocking {
         val context=ApplicationProvider.getApplicationContext<Context>()
         val name="mobile-delta-v8-test.db"
