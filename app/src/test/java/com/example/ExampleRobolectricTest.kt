@@ -5,6 +5,7 @@ import androidx.room.Room
 import com.example.data.FieldReadingDatabase
 import com.example.data.SubscriberEntity
 import com.example.data.PendingReadingEntity
+import com.example.data.PendingPaymentEntity
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
@@ -90,6 +91,27 @@ class ExampleRobolectricTest {
       assertEquals(1, dao.getReadingsForSubscriber("101").size)
       dao.replaceSubscribersSnapshot(listOf(subscriber("103")))
       assertEquals(setOf("101", "103"), dao.getAllSubscriberIds().toSet())
+    } finally {
+      db.close()
+    }
+  }
+
+  @Test
+  fun `snapshot retains subscriber with offline payment`() = runBlocking {
+    val context = ApplicationProvider.getApplicationContext<Context>()
+    val db = Room.inMemoryDatabaseBuilder(context, FieldReadingDatabase::class.java)
+      .allowMainThreadQueries().build()
+    try {
+      val dao = db.dao()
+      dao.replaceSubscribersSnapshot(listOf(subscriber("101"), subscriber("102")))
+      dao.insertPendingPayment(
+        PendingPaymentEntity(
+          subscriberId = "101", amount = 50.0, paymentMethod = "CASH",
+          notes = "", status = "pending"
+        )
+      )
+      dao.replaceSubscribersSnapshot(listOf(subscriber("102")))
+      assertEquals(setOf("101", "102"), dao.getAllSubscriberIds().toSet())
     } finally {
       db.close()
     }
