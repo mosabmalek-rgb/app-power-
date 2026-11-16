@@ -68,6 +68,7 @@ fun AddReadingScreen(
     var lastConfirmedLocation by remember { mutableStateOf<Pair<Double, Double>?>(null) }
     var pendingLocation by remember { mutableStateOf<Pair<Double, Double>?>(null) }
     var showLocationDialog by remember { mutableStateOf(false) }
+    var isSavingReading by remember { mutableStateOf(false) }
     var showSanityConfirmDialog by remember { mutableStateOf(false) }
     var sanityWarningMessage by remember { mutableStateOf("") }
 
@@ -213,9 +214,11 @@ fun AddReadingScreen(
             confirmButton = {
                 Button(
                     onClick = {
+                        if (isSavingReading) return@Button
                         showSanityConfirmDialog = false
                         val readingVal = currentReadingStr.toDoubleOrNull() ?: return@Button
                         val sub = subscriber ?: return@Button
+                        isSavingReading = true
                         viewModel.saveReading(
                             subscriberId = sub.id,
                             currentReading = readingVal,
@@ -227,6 +230,7 @@ fun AddReadingScreen(
                             fieldVerified = true,
                             readingValueText = currentReadingStr
                         ) { success, message ->
+                            isSavingReading = false
                             Toast.makeText(context, message, Toast.LENGTH_SHORT).show()
                             if (success) {
                                 val nextSub = viewModel.getNextUnreadSubscriber(sub.id)
@@ -239,6 +243,7 @@ fun AddReadingScreen(
                             }
                         }
                     },
+                    enabled = !isSavingReading,
                     colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)
                 ) {
                     Text("نعم، اعتمد القراءة واحفظ")
@@ -511,6 +516,7 @@ fun AddReadingScreen(
                 Spacer(modifier = Modifier.height(14.dp))
 
                 val executeSave = { navigateToNext: Boolean ->
+                    if (!isSavingReading) {
                     val readingVal = currentReadingStr.toDoubleOrNull()
                     if (readingVal == null) {
                         Toast.makeText(context, "الرجاء إدخال رقم قراءة صحيح أولاً", Toast.LENGTH_SHORT).show()
@@ -526,6 +532,7 @@ fun AddReadingScreen(
                         sanityWarningMessage = "الاستهلاك المحتسب (${consumption} ك.و) يبدو مرتفعاً بشكل غير معتاد مقارنة بالقراءة السابقة (${sub.lastReading} ك.و).\nهل أنت متأكد من صحة الرقم؟"
                         showSanityConfirmDialog = true
                     } else {
+                        isSavingReading = true
                         viewModel.saveReading(
                             subscriberId = sub.id,
                             currentReading = readingVal,
@@ -537,6 +544,7 @@ fun AddReadingScreen(
                             fieldVerified = true,
                             readingValueText = currentReadingStr
                         ) { success, message ->
+                            isSavingReading = false
                             Toast.makeText(context, message, Toast.LENGTH_SHORT).show()
                             if (success) {
                                 if (navigateToNext) {
@@ -554,11 +562,13 @@ fun AddReadingScreen(
                             }
                         }
                     }
+                    }
                 }
 
                 // Primary Quick Save & Next Button
                 Button(
                     onClick = { executeSave(true) },
+                    enabled = !isSavingReading,
                     modifier = Modifier.fillMaxWidth().height(52.dp).testTag("save_and_next_reading_button"),
                     shape = RoundedCornerShape(12.dp),
                     colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary)
@@ -575,6 +585,7 @@ fun AddReadingScreen(
                 // Secondary Save & Exit Button
                 OutlinedButton(
                     onClick = { executeSave(false) },
+                    enabled = !isSavingReading,
                     modifier = Modifier.fillMaxWidth().height(48.dp).testTag("save_reading_submit_button"),
                     shape = RoundedCornerShape(12.dp)
                 ) {
