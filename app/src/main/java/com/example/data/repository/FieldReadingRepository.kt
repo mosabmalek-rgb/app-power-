@@ -486,8 +486,8 @@ class FieldReadingRepository(
             ensureActiveAccessToken()
             val branchId = activeBranchId()
             if (branchId <= 0) throw IllegalStateException("حدّث قائمة المشتركين أولاً لتحديد الفرع المسموح.")
-            flushPendingSyncEvents()
             val scopeKey=currentScopeKey()
+            flushPendingSyncEvents()
             dao.resetInterruptedReadings(scopeKey)
             val readings = dao.getScopedPendingReadingsWithStatus(scopeKey,"pending") +
                 dao.getScopedPendingReadingsWithStatus(scopeKey,"retryable")
@@ -500,10 +500,13 @@ class FieldReadingRepository(
             var retryable = 0
             var needsReview = 0
             readings.forEachIndexed { index, reading ->
+                check(currentScopeKey()==scopeKey && dao.getActiveScope()?.scopeKey==scopeKey) {
+                    "تغير الحساب أثناء إرسال القراءات؛ توقفت المزامنة دون إرسال سجل نطاق آخر."
+                }
                 val localSubscriber = dao.getSubscriberById(reading.subscriberId)
                 if (localSubscriber == null || localSubscriber.branchId != branchId.toString()) {
-                    dao.updateReadingSyncState(
-                        reading.localId, "needs_review", reading.retryCount,
+                    dao.updateScopedReadingSyncState(
+                        reading.localId,scopeKey, "needs_review", reading.retryCount,
                         "القراءة تخص مشتركاً غير موجود في الفرع الحالي؛ أُوقف إرسالها لحماية عزل البيانات.",
                         System.currentTimeMillis()
                     )
@@ -512,8 +515,11 @@ class FieldReadingRepository(
                 }
                 onProgress(((index * 100) / readings.size).coerceAtLeast(5), "جارٍ إرسال قراءة ${index + 1} من ${readings.size}…")
                 try {
-                    dao.updateReadingSyncState(reading.localId, "syncing", reading.retryCount, null, System.currentTimeMillis())
+                    dao.updateScopedReadingSyncState(reading.localId,scopeKey, "syncing", reading.retryCount, null, System.currentTimeMillis())
                     val image = reading.photoPath?.let { loadImagePayload(it) ?: throw PermanentSyncException("تعذر العثور على صورة القراءة أو تجاوزت 5 ميغابايت.") }
+                    check(currentScopeKey()==scopeKey && dao.getActiveScope()?.scopeKey==scopeKey) {
+                        "تغير نطاق الحساب قبل الإرسال."
+                    }
                     val response = api.createReading(MobileReadingRequest(reading.clientReferenceId, branchId, reading.subscriberId.toLong(), ReadingValuePrecision.normalizeForSync(reading.currentReading, reading.readingValueText)
                         ?: throw PermanentSyncException("القراءة يجب أن تكون رقماً صحيحاً أو تحتوي على منزلة أو منزلتين عشريتين كحد أقصى."), localDateToUtc(reading.readingDate), if (image == null) "manual" else "photo", reading.isReadingReset, reading.fieldVerified, reading.latitude.takeIf { it != 0.0 }, reading.longitude.takeIf { it != 0.0 }, image?.first, image?.second, reading.notes.ifBlank { null }))
                     if (response.id > 0) { dao.updateReadingSyncState(reading.localId, "synced", reading.retryCount, null, System.currentTimeMillis()); synced++ }
@@ -550,7 +556,10 @@ class FieldReadingRepository(
         return outcome
     }
 
-    suspend fun requeueReadingForReview(localId: Int) = dao.requeueReadingForReview(localId)
+    suspend fun requeueReadingForReview(localId: Int) {
+        requireLocalOwner()
+        dao.requeueScopedReadingForReview(localId,currentScopeKey())
+    }
 
     private suspend fun queueSyncEvent(branchId: Long, eventType: String, status: String, summary: SyncSummary, errorCode: String? = null, errorMessage: String? = null) {
         dao.insertPendingSyncEvent(PendingSyncEventEntity(branchId = branchId, eventType = eventType, status = status, syncedCount = summary.synced, retryableCount = summary.retryable, needsReviewCount = summary.needsReview, errorCode = errorCode, errorMessage = errorMessage?.take(1500), scopeKey = currentScopeKey()))
@@ -558,7 +567,11 @@ class FieldReadingRepository(
     }
 
     private suspend fun flushPendingSyncEvents() {
-        dao.getScopedPendingSyncEvents(currentScopeKey()).forEach { event ->
+        val scopeKey=currentScopeKey()
+        dao.getScopedPendingSyncEvents(scopeKey).forEach { event ->
+            check(currentScopeKey()==scopeKey && dao.getActiveScope()?.scopeKey==scopeKey) {
+                "تغير الحساب أثناء رفع حدث المزامنة؛ أوقف الإرسال."
+            }
             check(event.branchId==activeBranchId()) { "أوقفت إرسال حدث من نطاق فرع آخر." }
             api.createSyncEvent(MobileSyncEventRequest(event.eventKey, event.branchId, event.eventType, event.status, event.syncedCount, event.retryableCount, event.needsReviewCount, event.errorCode, event.errorMessage, BuildConfig.VERSION_NAME, deviceLabel(), epochToUtc(event.createdAt)))
             dao.deletePendingSyncEvent(event.localId)
