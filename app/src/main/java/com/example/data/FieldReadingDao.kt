@@ -151,6 +151,13 @@ interface FieldReadingDao {
         ORDER BY lastAppliedAt DESC LIMIT 1""")
     suspend fun getLatestCompletedSyncState(scopeKey: String): MobileSyncStateEntity?
 
+    @Query("""SELECT * FROM mobile_sync_states WHERE scopeKey=:scopeKey AND mode='bootstrap'
+        AND completed=0 ORDER BY lastAppliedAt DESC LIMIT 1""")
+    suspend fun getIncompleteBootstrapState(scopeKey: String): MobileSyncStateEntity?
+
+    @Query("SELECT COUNT(*) FROM subscribers WHERE scopeKey=:scopeKey AND scopeVersion=:scopeVersion AND isVisible=1")
+    suspend fun visibleSubscriberCount(scopeKey: String, scopeVersion: String): Int
+
     @Insert(onConflict=OnConflictStrategy.REPLACE)
     suspend fun upsertSyncState(state: MobileSyncStateEntity)
 
