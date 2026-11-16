@@ -39,6 +39,7 @@ fun SyncScreen(
     val pendingPaymentsCount = pendingPayments.count { it.status != "synced" }
     val totalPending = pendingReadingsCount + retryableReadings.size +
         needsReviewReadings.size + pendingPaymentsCount
+    val uploadableReadings = pendingReadingsCount + retryableReadings.size + needsReviewReadings.size
 
     Scaffold(
         topBar = {
@@ -85,6 +86,13 @@ fun SyncScreen(
                     SyncQueueRow(label = "الدفعات المحفوظة محلياً (لم يؤكدها الخادم)", value = pendingPaymentsCount.toString(), color = MaterialTheme.colorScheme.secondary)
                     SyncQueueRow(label = "إعادة محاولة تلقائية", value = retryableReadings.size.toString(), color = MaterialTheme.colorScheme.tertiary)
                     SyncQueueRow(label = "تحتاج مراجعة الفني", value = needsReviewReadings.size.toString(), color = MaterialTheme.colorScheme.error)
+                    if (pendingPaymentsCount > 0) {
+                        Text(
+                            "الدفعات محفوظة بأمان على الجهاز، لكنها لا تُرسل عبر واجهة القراءة الميدانية الحالية؛ لن تُعرض كعمليات مؤكدة على الخادم.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.error
+                        )
+                    }
                     SyncQueueRow(label = "عدد الصور والملفات المرفقة", value = pendingReadings.count { it.photoPath != null && it.status != "synced" }.toString(), color = MaterialTheme.colorScheme.secondary)
                     
                     Divider()
@@ -106,7 +114,7 @@ fun SyncScreen(
             }
 
             // Sync actions block
-            if (totalPending > 0) {
+            if (uploadableReadings > 0) {
                 Button(
                     onClick = { viewModel.syncAllData() },
                     enabled = !isSyncing,
@@ -139,7 +147,7 @@ fun SyncScreen(
                         Icon(Icons.Default.CloudDone, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(32.dp))
                         Spacer(modifier = Modifier.width(16.dp))
                         Column {
-                            Text("لا توجد عمليات معلقة في هذا الحساب", fontWeight = FontWeight.Bold, fontSize = 14.sp, color = MaterialTheme.colorScheme.primary)
+                            Text(if (pendingPaymentsCount > 0) "لا توجد قراءات جاهزة للإرسال" else "لا توجد عمليات معلقة في هذا الحساب", fontWeight = FontWeight.Bold, fontSize = 14.sp, color = MaterialTheme.colorScheme.primary)
                             Text("لا يُعد نجاح تنزيل المشتركين تأكيداً لوصول قراءة أو دفعة؛ يؤكد الخادم كل عملية على حدة.", fontSize = 11.sp, color = MaterialTheme.colorScheme.primary.copy(alpha = 0.8f))
                         }
                     }
