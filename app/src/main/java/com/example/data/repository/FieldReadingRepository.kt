@@ -408,8 +408,15 @@ class FieldReadingRepository(
                     }
                     throw e
                 }
-                require(!response.requiresBootstrap) {
-                    "رفض الخادم استمرارية نطاق المزامنة؛ لم يُحدّث المؤشر المحلي."
+                if(response.requiresBootstrap) {
+                    require(!restarted) { "كرر الخادم طلب إعادة التهيئة؛ أوقفت المزامنة دون فقدان البيانات." }
+                    dao.quarantineActiveScope(scopeKey)
+                    dao.forgetIncompleteBootstrap(scopeKey)
+                    dao.forgetIncompleteDelta(scopeKey)
+                    cursor=null
+                    needsBootstrap=true
+                    restarted=true
+                    continue
                 }
                 require(response.tenantId==tenantId && response.userId==userId &&
                     response.branchId==branchId &&
