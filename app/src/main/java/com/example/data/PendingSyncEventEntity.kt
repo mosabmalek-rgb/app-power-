@@ -16,5 +16,6 @@ data class PendingSyncEventEntity(
     val needsReviewCount: Int = 0,
     val errorCode: String? = null,
     val errorMessage: String? = null,
-    val createdAt: Long = System.currentTimeMillis()
+    val createdAt: Long = System.currentTimeMillis(),
+    val scopeKey: String = "__legacy__"
 )

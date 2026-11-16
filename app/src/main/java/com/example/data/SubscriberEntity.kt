@@ -1,11 +1,11 @@
 package com.example.data
 
 import androidx.room.Entity
-import androidx.room.PrimaryKey
+import androidx.room.Index
 
-@Entity(tableName = "subscribers")
+@Entity(tableName = "subscribers", primaryKeys = ["scopeKey", "id"], indices = [Index(value = ["scopeKey", "branchId"])])
 data class SubscriberEntity(
-    @PrimaryKey val id: String,
+    val id: String,
     val refNumber: String,
     val name: String,
     val phone: String,
@@ -18,5 +18,9 @@ data class SubscriberEntity(
     val cycleReadingValue: String? = null,
     val cycleReadingAt: String? = null,
     val cycleReadingStatus: String? = null,
-    val currentCycleKey: String? = null
+    val currentCycleKey: String? = null,
+    val scopeKey: String = "__legacy__",
+    val scopeVersion: String = "__legacy__",
+    val isVisible: Boolean = true,
+    val bootstrapMarker: String? = null
 )

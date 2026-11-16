@@ -26,14 +26,20 @@ fun SyncScreen(
     onBack: () -> Unit
 ) {
     val pendingReadings by viewModel.pendingReadings.collectAsState()
+    val pendingPayments by viewModel.pendingPayments.collectAsState()
     val syncProgress by viewModel.syncProgress.collectAsState()
     val syncStatusMessage by viewModel.syncStatusMessage.collectAsState()
     val isSyncing by viewModel.isSyncing.collectAsState()
 
-    val pendingReadingsCount = pendingReadings.count { it.status == "pending" || it.status == "syncing" }
+    val locallySavedReadings = pendingReadings.count { it.status == "pending" }
+    val sendingReadings = pendingReadings.count { it.status == "syncing" }
     val retryableReadings = pendingReadings.filter { it.status == "retryable" }
     val needsReviewReadings = pendingReadings.filter { it.status == "needs_review" }
-    val totalPending = pendingReadingsCount + retryableReadings.size + needsReviewReadings.size
+    val pendingReadingsCount = locallySavedReadings + sendingReadings
+    val pendingPaymentsCount = pendingPayments.count { it.status != "synced" }
+    val totalPending = pendingReadingsCount + retryableReadings.size +
+        needsReviewReadings.size + pendingPaymentsCount
+    val uploadableReadings = pendingReadingsCount + retryableReadings.size + needsReviewReadings.size
 
     Scaffold(
         topBar = {
@@ -75,9 +81,18 @@ fun SyncScreen(
                     
                     Divider()
 
-                    SyncQueueRow(label = "عدد قراءات المشتركين المعلقة", value = pendingReadingsCount.toString(), color = MaterialTheme.colorScheme.primary)
+                    SyncQueueRow(label = "محفوظة محلياً ولم تُرسل", value = locallySavedReadings.toString(), color = MaterialTheme.colorScheme.primary)
+                    SyncQueueRow(label = "جارٍ الإرسال دون تأكيد", value = sendingReadings.toString(), color = MaterialTheme.colorScheme.primary)
+                    SyncQueueRow(label = "الدفعات المحفوظة محلياً (لم يؤكدها الخادم)", value = pendingPaymentsCount.toString(), color = MaterialTheme.colorScheme.secondary)
                     SyncQueueRow(label = "إعادة محاولة تلقائية", value = retryableReadings.size.toString(), color = MaterialTheme.colorScheme.tertiary)
                     SyncQueueRow(label = "تحتاج مراجعة الفني", value = needsReviewReadings.size.toString(), color = MaterialTheme.colorScheme.error)
+                    if (pendingPaymentsCount > 0) {
+                        Text(
+                            "الدفعات محفوظة بأمان على الجهاز، لكنها لا تُرسل عبر واجهة القراءة الميدانية الحالية؛ لن تُعرض كعمليات مؤكدة على الخادم.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.error
+                        )
+                    }
                     SyncQueueRow(label = "عدد الصور والملفات المرفقة", value = pendingReadings.count { it.photoPath != null && it.status != "synced" }.toString(), color = MaterialTheme.colorScheme.secondary)
                     
                     Divider()
@@ -99,7 +114,7 @@ fun SyncScreen(
             }
 
             // Sync actions block
-            if (totalPending > 0) {
+            if (uploadableReadings > 0) {
                 Button(
                     onClick = { viewModel.syncAllData() },
                     enabled = !isSyncing,
@@ -132,8 +147,50 @@ fun SyncScreen(
                         Icon(Icons.Default.CloudDone, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(32.dp))
                         Spacer(modifier = Modifier.width(16.dp))
                         Column {
-                            Text("كل البيانات متزامنة بالكامل", fontWeight = FontWeight.Bold, fontSize = 14.sp, color = MaterialTheme.colorScheme.primary)
-                            Text("لقد قمت بمزامنة وترحيل كافة العمليات بنجاح.", fontSize = 11.sp, color = MaterialTheme.colorScheme.primary.copy(alpha = 0.8f))
+                            Text(if (pendingPaymentsCount > 0) "لا توجد قراءات جاهزة للإرسال" else "لا توجد عمليات معلقة في هذا الحساب", fontWeight = FontWeight.Bold, fontSize = 14.sp, color = MaterialTheme.colorScheme.primary)
+                            Text("لا يُعد نجاح تنزيل المشتركين تأكيداً لوصول قراءة أو دفعة؛ يؤكد الخادم كل عملية على حدة.", fontSize = 11.sp, color = MaterialTheme.colorScheme.primary.copy(alpha = 0.8f))
+                        }
+                    }
+                }
+            }
+
+            // Per-reading delivery state: local save is not server acceptance.
+            if (pendingReadings.isNotEmpty()) {
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(12.dp)
+                ) {
+                    Column(
+                        modifier = Modifier.padding(16.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Text("حالة كل قراءة", fontWeight = FontWeight.Bold, fontSize = 14.sp)
+                        pendingReadings.forEach { reading ->
+                            val stateLabel = when (reading.status) {
+                                "pending" -> "محفوظة على الجهاز — لم تُرسل"
+                                "syncing" -> "جارٍ الإرسال — لم يتأكد الاستلام"
+                                "retryable" -> "تعذر الإرسال — ستُعاد المحاولة"
+                                "needs_review" -> "تحتاج مراجعة فنية"
+                                "synced" -> "وصلت إلى الخادم"
+                                else -> "حالة غير معروفة: ${reading.status}"
+                            }
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text("مشترك #${reading.subscriberId} — ${reading.currentReading}", fontSize = 12.sp, modifier = Modifier.weight(1f))
+                                Text(
+                                    stateLabel,
+                                    fontSize = 11.sp,
+                                    color = if (reading.status == "synced") MaterialTheme.colorScheme.primary
+                                        else MaterialTheme.colorScheme.error
+                                )
+                            }
+                            if (reading.status == "needs_review" && !reading.lastError.isNullOrBlank()) {
+                                Text(reading.lastError.orEmpty(), fontSize = 11.sp)
+                            }
+                            HorizontalDivider()
                         }
                     }
                 }

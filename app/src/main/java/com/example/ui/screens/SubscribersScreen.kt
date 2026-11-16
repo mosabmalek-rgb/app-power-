@@ -29,6 +29,9 @@ import com.example.data.SubscriberEntity
 import com.example.data.SubscriberCycleFilter
 import com.example.data.SubscriberSortOrder
 import com.example.ui.FieldReadingViewModel
+import com.example.data.ReadingCycleCalculator
+import java.util.Calendar
+import java.util.TimeZone
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -401,13 +404,30 @@ fun SubscriberCard(
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Text(
-                    text = subscriber.name,
-                    style = MaterialTheme.typography.titleMedium.copy(
-                        fontWeight = FontWeight.Bold,
-                        color = MaterialTheme.colorScheme.onSurface
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        text = subscriber.name,
+                        style = MaterialTheme.typography.titleMedium.copy(
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.onSurface
+                        )
                     )
-                )
+                    val today = Calendar.getInstance(TimeZone.getTimeZone("Asia/Gaza"))
+                    val readingTime = ReadingCycleCalculator.parseDateToTimestamp(
+                        subscriber.cycleReadingAt ?: subscriber.lastReadingDate, "Asia/Gaza"
+                    )
+                    val readingDay = readingTime?.let {
+                        Calendar.getInstance(TimeZone.getTimeZone("Asia/Gaza")).apply { timeInMillis = it }
+                    }
+                    if (isReadInCycle && readingDay != null &&
+                        today.get(Calendar.YEAR) == readingDay.get(Calendar.YEAR) &&
+                        today.get(Calendar.DAY_OF_YEAR) == readingDay.get(Calendar.DAY_OF_YEAR)
+                    ) {
+                        Spacer(Modifier.width(6.dp))
+                        Icon(Icons.Default.CheckCircle, contentDescription = "تمت القراءة اليوم",
+                            tint = Color(0xFF16A34A), modifier = Modifier.size(18.dp))
+                    }
+                }
 
                 // Account Balance indicator in Shekel
                 val balanceColor = if (subscriber.balance > 0) {

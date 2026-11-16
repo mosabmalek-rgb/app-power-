@@ -21,6 +21,7 @@ import com.example.data.api.MobileSessionStore
 import com.example.data.api.MobileSyncEventRequest
 import com.example.data.api.RemoteConfigRepository
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.sync.withLock
 import retrofit2.HttpException
 import org.json.JSONObject
 import java.io.File
@@ -216,10 +217,43 @@ class FieldReadingRepository(
         } catch (e: IOException) {
             throw Exception("تعذر الاتصال بالخادم. يرجى التحقق من اتصال الإنترنت.")
         }
+        // Never delete another account's Room data or pending outbox. The v8
+        // cache is attributed only when the previous account+tenant+site
+        // identity is independently proven; otherwise it stays quarantined.
+        val ownerPrefs=context.getSharedPreferences("field_cache_owner",Context.MODE_PRIVATE)
+        val newBranchId=session.user.branchIds.firstOrNull()?:-1L
+        require(newBranchId>0L) { "لا يوجد فرع مصرح به للتطبيق الميداني." }
+        val newOwner="${session.user.tenantId}:${session.user.id}:$newBranchId"
+        val previousOwner=ownerPrefs.getString("owner",null)
+        val previousUserId=prefs.getLong("profile_user_id",-1L)
+        val previousTenantId=prefs.getLong("profile_tenant_id",-1L)
+        val previousBranchId=prefs.getLong("active_branch_id",-1L)
+        val knownSameOwner=previousOwner==newOwner || (
+            previousOwner==null && previousUserId==session.user.id &&
+            previousTenantId==session.user.tenantId && previousBranchId==newBranchId
+        )
+        val legacyUnsent=dao.legacyUnsentReadingCount()+dao.legacyUnsentPaymentCount()+
+            dao.legacySyncEventCount()
+        if(!knownSameOwner && legacyUnsent>0){
+            throw IllegalStateException(
+                "هناك عمليات قديمة بلا هوية موثقة محفوظة بأمان. سجل الدخول بالحساب السابق لاستردادها قبل تبديل الحساب."
+            )
+        }
+        if(knownSameOwner)dao.claimVerifiedLegacyScope(newOwner)
+        val checkpoint=dao.getLatestCompletedSyncState(newOwner)
+        val hasLegacy=dao.visibleSubscriberCount(newOwner,"legacy-seeded")>0
+        dao.setActiveScope(com.example.data.MobileActiveScopeEntity(
+            scopeKey=newOwner,
+            scopeVersion=checkpoint?.scopeVersion?:if(hasLegacy)"legacy-seeded" else "not-bootstrapped",
+            status=if(checkpoint!=null || hasLegacy)"ready" else "bootstrapping",
+        ))
+        if(!knownSameOwner)prefs.edit().remove("last_subscriber_refresh_at").apply()
+        ownerPrefs.edit().putString("owner", newOwner).apply()
         sessionStore.save(session)
         prefs.edit().apply {
             putString("user_name", session.user.name ?: email.substringBefore("@"))
             putLong("profile_user_id", session.user.id)
+            putLong("profile_tenant_id", session.user.tenantId)
             putString("user_role", session.user.role)
             putString("company_name", "PowerHub")
             putLong("active_branch_id", session.user.branchIds.firstOrNull() ?: -1L)
@@ -235,7 +269,10 @@ class FieldReadingRepository(
         prefs.edit().putBoolean("must_change_password", false).apply()
     }
 
-    fun clearSession() {
+    suspend fun clearSession() {
+        // Atomic identity deactivation in Room occurs before removing the
+        // credentials: no cached subscriber from another account is displayed.
+        dao.clearActiveScope()
         sessionStore.clear()
         prefs.edit().clear().apply()
     }
@@ -247,7 +284,13 @@ class FieldReadingRepository(
 
     suspend fun saveReading(subscriberId: String, currentReading: Double, notes: String, latitude: Double, longitude: Double, photoPath: String?, isReadingReset: Boolean, cycleRange: com.example.data.CycleDateRange, fieldVerified: Boolean = true, readingValueText: String? = null): Result<Unit> {
         requireSubscriptionForOffline()
+        requireLocalOwner()
+        val active=dao.getActiveScope()
+        check(active?.scopeKey==currentScopeKey() && active.status=="ready") { "نطاق البيانات المحلية غير جاهز." }
         val subscriber = dao.getSubscriberById(subscriberId) ?: return Result.failure(Exception("لم يتم العثور على بيانات هذا المشترك على الجهاز."))
+        if (subscriber.branchId != activeBranchId().toString()) {
+            return Result.failure(IllegalStateException("هذا المشترك لا ينتمي إلى الفرع المصرح به على الجهاز."))
+        }
         val normalizedReadingText = ReadingValuePrecision.normalizeForSync(currentReading, readingValueText)
             ?: return Result.failure(Exception("القراءة يجب أن تكون رقماً صحيحاً أو تحتوي على منزلة أو منزلتين عشريتين كحد أقصى."))
         if (!isReadingReset && currentReading < subscriber.lastReading) return Result.failure(Exception("القراءة الحالية يجب أن تكون أكبر من أو تساوي القراءة السابقة."))
@@ -261,7 +304,7 @@ class FieldReadingRepository(
         val zone = TimeZone.getTimeZone(cycleRange.timeZoneId)
         val startText = SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.US).apply { timeZone = zone }.format(Date(cycleRange.startMillis))
         val endExclusiveText = SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.US).apply { timeZone = zone }.format(Date(cycleRange.endMillis + 1L))
-        val reading = PendingReadingEntity(subscriberId = subscriberId, currentReading = currentReading, readingDate = currentDateTime(), notes = notes, latitude = latitude, longitude = longitude, photoPath = photoPath, status = "pending", isReadingReset = isReadingReset, fieldVerified = fieldVerified, readingValueText = normalizedReadingText, readingCycleKey = cycleKey)
+        val reading = PendingReadingEntity(subscriberId = subscriberId, currentReading = currentReading, readingDate = currentDateTime(), notes = notes, latitude = latitude, longitude = longitude, photoPath = photoPath, status = "pending", isReadingReset = isReadingReset, fieldVerified = fieldVerified, readingValueText = normalizedReadingText, readingCycleKey = cycleKey, scopeKey = currentScopeKey())
         if (!dao.insertPendingReadingIfNoReadingInCycle(reading, cycleKey, startText, endExclusiveText)) {
             return Result.failure(Exception("توجد قراءة محفوظة لهذا المشترك في دورة القراءة الحالية، محلية أو على الخادم."))
         }
@@ -270,39 +313,199 @@ class FieldReadingRepository(
 
     suspend fun savePayment(subscriberId: String, amount: Double, paymentMethod: String, notes: String): Boolean {
         if (amount <= 0) return false
-        dao.insertPendingPayment(PendingPaymentEntity(subscriberId = subscriberId, amount = amount, paymentMethod = paymentMethod, notes = notes, status = "pending"))
+        requireLocalOwner()
+        val active=dao.getActiveScope()
+        if(active?.scopeKey!=currentScopeKey() || active.status!="ready")return false
+        val subscriber = dao.getSubscriberById(subscriberId) ?: return false
+        if (subscriber.branchId != activeBranchId().toString()) return false
+        dao.insertPendingPayment(PendingPaymentEntity(subscriberId = subscriberId, amount = amount, paymentMethod = paymentMethod, notes = notes, status = "pending", scopeKey = currentScopeKey()))
         return true
     }
 
-    suspend fun refreshSubscribers(): Result<Unit> = runCatching {
-        ensureActiveAccessToken()
-        val profile = api.getProfile().user
-        val branchId = activeBranchId().takeIf { it in profile.branchIds } ?: profile.branchIds.firstOrNull()
-            ?: throw IllegalStateException("لا توجد فروع ميدانية مسموحة لهذا الحساب.")
-        prefs.edit().putLong("active_branch_id", branchId).apply()
-        val cycleRange = refreshReadingCycleConfiguration().getOrThrow()
-        val allItems = buildList { var cursor: String? = null; do { val response = api.getSubscribers(branchId, 100, cursor); addAll(response.items); cursor = response.nextCursor } while (!cursor.isNullOrBlank()) }
-        dao.replaceSubscribersSnapshot(allItems.map { item ->
-            val cycleReading = item.currentCycleReading
-            SubscriberEntity(
-                id = item.id.toString(), refNumber = item.subscriberNo, name = item.fullName, phone = item.phone,
-                address = item.address ?: "", branchId = item.branchId.toString(),
-                lastReading = item.lastReading?.toDoubleOrNull() ?: 0.0, lastReadingDate = item.lastReadingAt ?: "", balance = 0.0,
-                hasReadingInCurrentCycle = item.hasReadingInCurrentCycle,
-                cycleReadingValue = cycleReading?.readingValue, cycleReadingAt = cycleReading?.readingAt,
-                cycleReadingStatus = cycleReading?.status, currentCycleKey = if (item.hasReadingInCurrentCycle) cycleRange.cycleKey else null
-            )
-        })
+    // All Repository instances (foreground + WorkManager) share this lock.
+    // Database transactions protect checkpoints across process crashes.
+    private companion object {
+        val subscriberRefreshMutex = kotlinx.coroutines.sync.Mutex()
+        val pendingSendMutex = kotlinx.coroutines.sync.Mutex()
+        const val MAX_DELTA_PAGES_PER_RUN = 500
     }
 
-    suspend fun syncAllData(onProgress: (Int, String) -> Unit): Result<SyncSummary> {
+    private fun currentScopeKey(): String {
+        val tenantId=prefs.getLong("profile_tenant_id",-1L)
+        val userId=currentProfileUserId()?:-1L
+        val branchId=activeBranchId()
+        check(tenantId>0L && userId>0L && branchId>0L)
+        return "$tenantId:$userId:$branchId"
+    }
+
+    private fun requireLocalOwner() {
+        val expected=currentScopeKey()
+        val recorded=context.getSharedPreferences("field_cache_owner",Context.MODE_PRIVATE)
+            .getString("owner",null)
+        check(recorded==expected) {
+            "بيانات هذا الجهاز تخص حساباً أو فرعاً آخر. أعد تسجيل الدخول قبل العمل الميداني."
+        }
+    }
+
+    fun lastSubscriberRefreshAt(): Long=prefs.getLong("last_subscriber_refresh_at",0L)
+
+    suspend fun refreshSubscribersIfStale(maxAgeMillis: Long=15*60*1000L): Result<Unit> {
+        if(!isLoggedIn())return Result.success(Unit)
+        requireLocalOwner()
+        val last=lastSubscriberRefreshAt()
+        if(last>0 && System.currentTimeMillis()-last in 0 until maxAgeMillis)
+            return Result.success(Unit)
+        return refreshSubscribers()
+    }
+
+    suspend fun refreshSubscribers(): Result<Unit> = subscriberRefreshMutex.withLock {
+        runCatching {
+            requireLocalOwner()
+            ensureActiveAccessToken()
+            val profile=api.getProfile().user
+            val branchId=activeBranchId()
+            val scopeKey=currentScopeKey()
+            val tenantId=prefs.getLong("profile_tenant_id",-1L)
+            val userId=currentProfileUserId()?:-1L
+            require(profile.id==userId && profile.tenantId==tenantId &&
+                branchId>0L && branchId in profile.branchIds) {
+                "تغير نطاق الحساب أو الفرع؛ توقفت المزامنة لحماية البيانات المحلية."
+            }
+            val active=dao.getActiveScope()
+            require(active?.scopeKey==scopeKey) {
+                "نطاق قاعدة البيانات لا يطابق الحساب المسجل."
+            }
+            // Persisted pending bootstrap takes precedence over the last full
+            // checkpoint, even after a process crash between Delta pages.
+            val pending=dao.getIncompleteBootstrapState(scopeKey)
+            val inProgressDelta=dao.getIncompleteDeltaState(scopeKey,active.scopeVersion)
+            val complete=dao.getLatestCompletedSyncState(scopeKey)
+            var cursor=pending?.cursor?:inProgressDelta?.cursor?:complete?.cursor
+            var needsBootstrap=cursor==null
+            var restarted=false
+            val seenCursors=mutableSetOf<String>()
+            var pages=0
+            var totalTransferred=0
+            while(true) {
+                require(pages++<MAX_DELTA_PAGES_PER_RUN) {
+                    "تجاوزت المزامنة الحد الآمن للصفحات؛ المؤشر المحفوظ لم يتقدم دون معاملة Room."
+                }
+                val response=try {
+                    api.getSubscribersDelta(branchId,100,cursor,if(needsBootstrap)true else null)
+                } catch(e:HttpException) {
+                    val code=parseServerApiError(e)?.code
+                    if(e.code() in listOf(400,409) &&
+                        code in setOf("CURSOR_EXPIRED","CURSOR_SCOPE_CHANGED",
+                            "CURSOR_INVALID","BOOTSTRAP_REQUIRED") && !restarted) {
+                        // Server invalidated the previous scope/cursor. Keep
+                        // pending work and quarantine the old subscriber view.
+                        dao.quarantineActiveScope(scopeKey)
+                        dao.forgetIncompleteBootstrap(scopeKey)
+                        dao.forgetIncompleteDelta(scopeKey)
+                        cursor=null
+                        needsBootstrap=true
+                        restarted=true
+                        continue
+                    }
+                    throw e
+                }
+                if(response.requiresBootstrap) {
+                    require(!restarted) { "كرر الخادم طلب إعادة التهيئة؛ أوقفت المزامنة دون فقدان البيانات." }
+                    dao.quarantineActiveScope(scopeKey)
+                    dao.forgetIncompleteBootstrap(scopeKey)
+                    dao.forgetIncompleteDelta(scopeKey)
+                    cursor=null
+                    needsBootstrap=true
+                    restarted=true
+                    continue
+                }
+                require(response.tenantId==tenantId && response.userId==userId &&
+                    response.branchId==branchId &&
+                    response.scopeVersion.length==64 &&
+                    response.scopeVersion.all { it in '0'..'9' || it in 'a'..'f' }) {
+                    "استجابة Delta لا تطابق هوية المستأجر أو الفني أو الفرع."
+                }
+                require(response.mode in listOf("bootstrap","delta")) {
+                    "طور المزامنة غير موثوق."
+                }
+                if(needsBootstrap)require(response.mode=="bootstrap") {
+                    "رفض تطبيق Delta قبل تهيئة كاملة."
+                }
+                require(response.nextCursor.isNotBlank() && response.nextCursor.length<=2048)
+                require(!response.hasMore || (response.nextCursor!=cursor &&
+                    seenCursors.add(response.nextCursor))) {
+                    "حُلقة أو تكرار في المؤشرات؛ لم يتم تجاوز آخر صفحة مثبتة."
+                }
+                require(response.upserts.all { it.branchId==branchId }) {
+                    "احتوت صفحة Delta على بيانات فرع آخر؛ لن تطبق محلياً."
+                }
+                val cycle=response.currentCycle
+                require(cycle.key.isNotBlank() && cycle.startAt.isNotBlank() &&
+                    cycle.endAt.isNotBlank()) {
+                    "بيانات دورة القراءة غير مكتملة."
+                }
+                val serverTime=java.time.Instant.parse(response.serverTime).toEpochMilli()
+                val upserts=response.upserts.map { item ->
+                    val reading=item.currentCycleReading
+                    com.example.data.SubscriberEntity(
+                        id=item.id.toString(),
+                        refNumber=item.subscriberNo,
+                        name=item.fullName,
+                        phone=item.phone,
+                        address=item.address?:"",
+                        branchId=branchId.toString(),
+                        lastReading=item.lastReading?.toDoubleOrNull()?:0.0,
+                        lastReadingDate=item.lastReadingAt?:"",
+                        balance=0.0,
+                        hasReadingInCurrentCycle=item.hasReadingInCurrentCycle,
+                        cycleReadingValue=reading?.readingValue,
+                        cycleReadingAt=reading?.readingAt,
+                        cycleReadingStatus=reading?.status,
+                        currentCycleKey=if(item.hasReadingInCurrentCycle)cycle.key else null,
+                        scopeKey=scopeKey,scopeVersion=response.scopeVersion,
+                    )
+                }
+                val deletes=response.deletes.map { value ->
+                    require(value>0L) { "معرف حذف Delta غير صالح." }
+                    value.toString()
+                }
+                // Data changes and the only resumable cursor are in ONE Room
+                // transaction. Failure before/within it cannot advance state.
+                dao.applyMobileDeltaPage(scopeKey,response.scopeVersion,
+                    branchId.toString(),response.mode,upserts,deletes,
+                    response.nextCursor,response.hasMore,serverTime)
+                totalTransferred+=upserts.size+deletes.size
+                cursor=response.nextCursor
+                needsBootstrap=false
+                if(!response.hasMore) {
+                    // A subscriber or reading may have changed while the
+                    // bootstrap pages were being downloaded. The signed final
+                    // bootstrap cursor starts Delta at the frozen high-water:
+                    // immediately reconcile subsequent changes before marking
+                    // this refresh complete.
+                    if(response.mode=="bootstrap")continue
+                    prefs.edit().putLong("last_subscriber_refresh_at",serverTime).apply()
+                    break
+                }
+            }
+            android.util.Log.d("PowerHubSync",
+                "Delta complete; pages=$pages records=$totalTransferred")
+            Unit
+        }
+    }
+
+    suspend fun syncAllData(onProgress: (Int, String) -> Unit): Result<SyncSummary> = pendingSendMutex.withLock {
         requireSubscriptionForOffline()
+        requireLocalOwner()
         val outcome = runCatching {
             ensureActiveAccessToken()
             val branchId = activeBranchId()
             if (branchId <= 0) throw IllegalStateException("حدّث قائمة المشتركين أولاً لتحديد الفرع المسموح.")
+            val scopeKey=currentScopeKey()
             flushPendingSyncEvents()
-            val readings = dao.getPendingReadingsWithStatus("pending") + dao.getPendingReadingsWithStatus("retryable")
+            dao.resetInterruptedReadings(scopeKey)
+            val readings = dao.getScopedPendingReadingsWithStatus(scopeKey,"pending") +
+                dao.getScopedPendingReadingsWithStatus(scopeKey,"retryable")
             if (readings.isEmpty()) {
                 val summary = SyncSummary(0, 0, 0)
                 queueSyncEvent(branchId, "sync_cycle", "success", summary)
@@ -312,22 +515,38 @@ class FieldReadingRepository(
             var retryable = 0
             var needsReview = 0
             readings.forEachIndexed { index, reading ->
+                check(currentScopeKey()==scopeKey && dao.getActiveScope()?.scopeKey==scopeKey) {
+                    "تغير الحساب أثناء إرسال القراءات؛ توقفت المزامنة دون إرسال سجل نطاق آخر."
+                }
+                val localSubscriber = dao.getSubscriberById(reading.subscriberId)
+                if (localSubscriber == null || localSubscriber.branchId != branchId.toString()) {
+                    dao.updateScopedReadingSyncState(
+                        reading.localId,scopeKey, "needs_review", reading.retryCount,
+                        "القراءة تخص مشتركاً غير موجود في الفرع الحالي؛ أُوقف إرسالها لحماية عزل البيانات.",
+                        System.currentTimeMillis()
+                    )
+                    needsReview++
+                    return@forEachIndexed
+                }
                 onProgress(((index * 100) / readings.size).coerceAtLeast(5), "جارٍ إرسال قراءة ${index + 1} من ${readings.size}…")
                 try {
-                    dao.updateReadingSyncState(reading.localId, "syncing", reading.retryCount, null, System.currentTimeMillis())
+                    dao.updateScopedReadingSyncState(reading.localId,scopeKey, "syncing", reading.retryCount, null, System.currentTimeMillis())
                     val image = reading.photoPath?.let { loadImagePayload(it) ?: throw PermanentSyncException("تعذر العثور على صورة القراءة أو تجاوزت 5 ميغابايت.") }
+                    check(currentScopeKey()==scopeKey && dao.getActiveScope()?.scopeKey==scopeKey) {
+                        "تغير نطاق الحساب قبل الإرسال."
+                    }
                     val response = api.createReading(MobileReadingRequest(reading.clientReferenceId, branchId, reading.subscriberId.toLong(), ReadingValuePrecision.normalizeForSync(reading.currentReading, reading.readingValueText)
                         ?: throw PermanentSyncException("القراءة يجب أن تكون رقماً صحيحاً أو تحتوي على منزلة أو منزلتين عشريتين كحد أقصى."), localDateToUtc(reading.readingDate), if (image == null) "manual" else "photo", reading.isReadingReset, reading.fieldVerified, reading.latitude.takeIf { it != 0.0 }, reading.longitude.takeIf { it != 0.0 }, image?.first, image?.second, reading.notes.ifBlank { null }))
-                    if (response.id > 0) { dao.updateReadingSyncState(reading.localId, "synced", reading.retryCount, null, System.currentTimeMillis()); synced++ }
+                    if (response.id > 0) { dao.updateScopedReadingSyncState(reading.localId,scopeKey, "synced", reading.retryCount, null, System.currentTimeMillis()); synced++ }
                     else {
                         val message = "رفض الخادم تأكيد القراءة؛ ستُعاد المحاولة تلقائياً."
-                        dao.updateReadingSyncState(reading.localId, "retryable", reading.retryCount + 1, message, System.currentTimeMillis())
+                        dao.updateScopedReadingSyncState(reading.localId,scopeKey, "retryable", reading.retryCount + 1, message, System.currentTimeMillis())
                         queueSyncEvent(branchId, "sync_error", "retryable", SyncSummary(0, 1, 0), "READING_SYNC_UNCONFIRMED", message)
                         retryable++
                     }
                 } catch (error: Exception) {
                     val issue = classifySyncFailure(error)
-                    dao.updateReadingSyncState(reading.localId, issue.status, reading.retryCount + 1, issue.message, System.currentTimeMillis())
+                    dao.updateScopedReadingSyncState(reading.localId,scopeKey, issue.status, reading.retryCount + 1, issue.message, System.currentTimeMillis())
                     val diagnosticCode = issue.errorCode
                         ?: if (issue.status == "needs_review") "READING_SYNC_REVIEW" else "READING_SYNC_RETRY"
                     queueSyncEvent(branchId, "sync_error", issue.status, SyncSummary(0, if (issue.status == "needs_review") 0 else 1, if (issue.status == "needs_review") 1 else 0), diagnosticCode, issue.message)
@@ -336,7 +555,7 @@ class FieldReadingRepository(
             }
             onProgress(100, "اكتمل إرسال القراءات: $synced ناجحة، $retryable ستُعاد تلقائياً، $needsReview تحتاج مراجعة.")
             if (synced > 0) {
-                dao.clearSyncedReadings()
+                dao.clearSyncedReadingsForScope(scopeKey)
                 // Refresh the server-authoritative meter baseline after successful uploads.
                 // This keeps platform-entered readings and field-entered readings in sync
                 // without discarding any unsynced local work.
@@ -352,17 +571,25 @@ class FieldReadingRepository(
         return outcome
     }
 
-    suspend fun requeueReadingForReview(localId: Int) = dao.requeueReadingForReview(localId)
+    suspend fun requeueReadingForReview(localId: Int) {
+        requireLocalOwner()
+        dao.requeueScopedReadingForReview(localId,currentScopeKey())
+    }
 
     private suspend fun queueSyncEvent(branchId: Long, eventType: String, status: String, summary: SyncSummary, errorCode: String? = null, errorMessage: String? = null) {
-        dao.insertPendingSyncEvent(PendingSyncEventEntity(branchId = branchId, eventType = eventType, status = status, syncedCount = summary.synced, retryableCount = summary.retryable, needsReviewCount = summary.needsReview, errorCode = errorCode, errorMessage = errorMessage?.take(1500)))
+        dao.insertPendingSyncEvent(PendingSyncEventEntity(branchId = branchId, eventType = eventType, status = status, syncedCount = summary.synced, retryableCount = summary.retryable, needsReviewCount = summary.needsReview, errorCode = errorCode, errorMessage = errorMessage?.take(1500), scopeKey = currentScopeKey()))
         runCatching { flushPendingSyncEvents() }
     }
 
     private suspend fun flushPendingSyncEvents() {
-        dao.getPendingSyncEvents().forEach { event ->
+        val scopeKey=currentScopeKey()
+        dao.getScopedPendingSyncEvents(scopeKey).forEach { event ->
+            check(currentScopeKey()==scopeKey && dao.getActiveScope()?.scopeKey==scopeKey) {
+                "تغير الحساب أثناء رفع حدث المزامنة؛ أوقف الإرسال."
+            }
+            check(event.branchId==activeBranchId()) { "أوقفت إرسال حدث من نطاق فرع آخر." }
             api.createSyncEvent(MobileSyncEventRequest(event.eventKey, event.branchId, event.eventType, event.status, event.syncedCount, event.retryableCount, event.needsReviewCount, event.errorCode, event.errorMessage, BuildConfig.VERSION_NAME, deviceLabel(), epochToUtc(event.createdAt)))
-            dao.deletePendingSyncEvent(event.localId)
+            dao.deleteScopedPendingSyncEvent(event.localId,scopeKey)
         }
     }
 

@@ -17,10 +17,12 @@ import java.util.concurrent.TimeUnit
 class FieldReadingSyncWorker(appContext: Context, params: WorkerParameters) : CoroutineWorker(appContext, params) {
     override suspend fun doWork(): Result {
         val repository = FieldReadingRepository(applicationContext, FieldReadingDatabase.getDatabase(applicationContext).dao())
-        return repository.syncAllData { _, _ -> }.fold(
-            onSuccess = { summary -> if (summary.retryable > 0) Result.retry() else Result.success() },
-            onFailure = { Result.retry() }
-        )
+        val sync = repository.syncAllData { _, _ -> }
+        if (sync.isFailure) return Result.retry()
+        // Subscriber refresh is independent of the pending-reading queue.
+        // A failed refresh leaves the last complete local snapshot intact.
+        val refresh = repository.refreshSubscribersIfStale()
+        return if (sync.getOrThrow().retryable > 0 || refresh.isFailure) Result.retry() else Result.success()
     }
 
     companion object {
