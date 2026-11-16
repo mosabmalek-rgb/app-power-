@@ -68,7 +68,7 @@ interface FieldReadingDao {
 
     @Query("""
         SELECT COUNT(*) FROM pending_readings
-        WHERE subscriberId = :subscriberId
+        WHERE subscriberId = :subscriberId AND scopeKey = :scopeKey
           AND (
             readingCycleKey = :cycleKey
             OR (
@@ -82,7 +82,8 @@ interface FieldReadingDao {
         subscriberId: String,
         cycleKey: String,
         startDateInclusive: String,
-        endDateExclusive: String
+        endDateExclusive: String,
+        scopeKey: String = "__legacy__"
     ): Int
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
@@ -95,7 +96,7 @@ interface FieldReadingDao {
         startDateInclusive: String,
         endDateExclusive: String
     ): Boolean {
-        if (countReadingsForSubscriberInCycle(reading.subscriberId, cycleKey, startDateInclusive, endDateExclusive) > 0) {
+        if (countReadingsForSubscriberInCycle(reading.subscriberId, cycleKey, startDateInclusive, endDateExclusive, reading.scopeKey) > 0) {
             return false
         }
         insertPendingReading(reading)
@@ -166,6 +167,11 @@ interface FieldReadingDao {
 
     @Insert(onConflict=OnConflictStrategy.REPLACE)
     suspend fun upsertSyncState(state: MobileSyncStateEntity)
+
+    @Query("""UPDATE pending_readings SET status='retryable',
+        lastError='استرداد قراءة بعد انقطاع أثناء الإرسال'
+        WHERE scopeKey=:scopeKey AND status='syncing'""")
+    suspend fun resetInterruptedReadings(scopeKey: String)
 
     @Query("SELECT * FROM pending_readings WHERE scopeKey=:scopeKey AND status=:status ORDER BY createdAt")
     suspend fun getScopedPendingReadingsWithStatus(scopeKey: String,status: String): List<PendingReadingEntity>
