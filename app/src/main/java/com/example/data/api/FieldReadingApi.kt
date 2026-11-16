@@ -39,6 +39,21 @@ data class MobileSubscribersResponse(
     val nextCursor: String?,
     val currentCycle: MobileReadingCycleBoundsDto? = null
 )
+data class MobileSubscribersDeltaResponse(
+    val tenantId: Long,
+    val userId: Long,
+    val branchId: Long,
+    val mode: String,
+    val scopeVersion: String,
+    val currentCycle: MobileReadingCycleBoundsDto,
+    val upserts: List<MobileSubscriberDto>,
+    val deletes: List<Long>,
+    val nextCursor: String,
+    val hasMore: Boolean,
+    val requiresBootstrap: Boolean,
+    val serverTime: String,
+    val transferredCount: Int = 0
+)
 data class MobileCycleSyncStatsResponse(
     val branchId: Long,
     val from: String,
@@ -107,6 +122,14 @@ interface FieldReadingApi {
 
     @GET("api/mobile/v1/subscribers")
     suspend fun getSubscribers(@Query("branchId") branchId: Long, @Query("limit") limit: Int = 100, @Query("cursor") cursor: String? = null): MobileSubscribersResponse
+
+    @GET("api/mobile/v1/subscribers/delta")
+    suspend fun getSubscribersDelta(
+        @Query("branchId") branchId: Long,
+        @Query("limit") limit: Int = 100,
+        @Query("cursor") cursor: String? = null,
+        @Query("bootstrap") bootstrap: Boolean? = null,
+    ): MobileSubscribersDeltaResponse
 
     @GET("api/mobile/v1/reading-cycle")
     suspend fun getReadingCycle(@Query("branchId") branchId: Long): MobileReadingCycleResponse
