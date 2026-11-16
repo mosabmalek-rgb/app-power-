@@ -26,14 +26,19 @@ fun SyncScreen(
     onBack: () -> Unit
 ) {
     val pendingReadings by viewModel.pendingReadings.collectAsState()
+    val pendingPayments by viewModel.pendingPayments.collectAsState()
     val syncProgress by viewModel.syncProgress.collectAsState()
     val syncStatusMessage by viewModel.syncStatusMessage.collectAsState()
     val isSyncing by viewModel.isSyncing.collectAsState()
 
-    val pendingReadingsCount = pendingReadings.count { it.status == "pending" || it.status == "syncing" }
+    val locallySavedReadings = pendingReadings.count { it.status == "pending" }
+    val sendingReadings = pendingReadings.count { it.status == "syncing" }
     val retryableReadings = pendingReadings.filter { it.status == "retryable" }
     val needsReviewReadings = pendingReadings.filter { it.status == "needs_review" }
-    val totalPending = pendingReadingsCount + retryableReadings.size + needsReviewReadings.size
+    val pendingReadingsCount = locallySavedReadings + sendingReadings
+    val pendingPaymentsCount = pendingPayments.count { it.status != "synced" }
+    val totalPending = pendingReadingsCount + retryableReadings.size +
+        needsReviewReadings.size + pendingPaymentsCount
 
     Scaffold(
         topBar = {
@@ -75,7 +80,9 @@ fun SyncScreen(
                     
                     Divider()
 
-                    SyncQueueRow(label = "عدد قراءات المشتركين المعلقة", value = pendingReadingsCount.toString(), color = MaterialTheme.colorScheme.primary)
+                    SyncQueueRow(label = "محفوظة محلياً ولم تُرسل", value = locallySavedReadings.toString(), color = MaterialTheme.colorScheme.primary)
+                    SyncQueueRow(label = "جارٍ الإرسال دون تأكيد", value = sendingReadings.toString(), color = MaterialTheme.colorScheme.primary)
+                    SyncQueueRow(label = "الدفعات المحفوظة محلياً (لم يؤكدها الخادم)", value = pendingPaymentsCount.toString(), color = MaterialTheme.colorScheme.secondary)
                     SyncQueueRow(label = "إعادة محاولة تلقائية", value = retryableReadings.size.toString(), color = MaterialTheme.colorScheme.tertiary)
                     SyncQueueRow(label = "تحتاج مراجعة الفني", value = needsReviewReadings.size.toString(), color = MaterialTheme.colorScheme.error)
                     SyncQueueRow(label = "عدد الصور والملفات المرفقة", value = pendingReadings.count { it.photoPath != null && it.status != "synced" }.toString(), color = MaterialTheme.colorScheme.secondary)
@@ -132,8 +139,8 @@ fun SyncScreen(
                         Icon(Icons.Default.CloudDone, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(32.dp))
                         Spacer(modifier = Modifier.width(16.dp))
                         Column {
-                            Text("كل البيانات متزامنة بالكامل", fontWeight = FontWeight.Bold, fontSize = 14.sp, color = MaterialTheme.colorScheme.primary)
-                            Text("لقد قمت بمزامنة وترحيل كافة العمليات بنجاح.", fontSize = 11.sp, color = MaterialTheme.colorScheme.primary.copy(alpha = 0.8f))
+                            Text("لا توجد عمليات معلقة في هذا الحساب", fontWeight = FontWeight.Bold, fontSize = 14.sp, color = MaterialTheme.colorScheme.primary)
+                            Text("لا يُعد نجاح تنزيل المشتركين تأكيداً لوصول قراءة أو دفعة؛ يؤكد الخادم كل عملية على حدة.", fontSize = 11.sp, color = MaterialTheme.colorScheme.primary.copy(alpha = 0.8f))
                         }
                     }
                 }
