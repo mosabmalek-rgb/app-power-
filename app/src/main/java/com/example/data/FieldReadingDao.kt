@@ -15,7 +15,9 @@ interface FieldReadingDao {
         WHERE a.status='ready' AND s.isVisible=1 AND s.id=:id LIMIT 1""")
     suspend fun getSubscriberById(id: String): SubscriberEntity?
 
-    @Query("SELECT * FROM subscribers WHERE id = :id LIMIT 1")
+    @Query("""SELECT s.* FROM subscribers s JOIN mobile_active_scope a
+        ON a.id=1 AND a.scopeKey=s.scopeKey AND a.scopeVersion=s.scopeVersion
+        WHERE a.status='ready' AND s.isVisible=1 AND s.id=:id LIMIT 1""")
     fun getSubscriberByIdFlow(id: String): Flow<SubscriberEntity?>
 
     @Query("""SELECT s.* FROM subscribers s JOIN mobile_active_scope a ON a.id=1
@@ -132,6 +134,9 @@ interface FieldReadingDao {
 
     @Query("DELETE FROM pending_sync_events WHERE localId = :localId")
     suspend fun deletePendingSyncEvent(localId: Int)
+    @Query("DELETE FROM pending_sync_events WHERE localId=:localId AND scopeKey=:scopeKey")
+    suspend fun deleteScopedPendingSyncEvent(localId: Int,scopeKey: String): Int
+
 
     @Query("""SELECT p.* FROM pending_payments p JOIN mobile_active_scope a
         ON a.id=1 AND p.scopeKey=a.scopeKey ORDER BY p.createdAt DESC""")
