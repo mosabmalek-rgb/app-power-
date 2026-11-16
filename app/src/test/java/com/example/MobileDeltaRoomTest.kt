@@ -84,6 +84,33 @@ class MobileDeltaRoomTest {
         } finally { db.close() }
     }
 
+    @Test fun `authorization scope renewal cannot replay an abandoned Delta checkpoint`() = runBlocking {
+        val context=ApplicationProvider.getApplicationContext<Context>()
+        val db=Room.inMemoryDatabaseBuilder(context,FieldReadingDatabase::class.java)
+            .allowMainThreadQueries().build()
+        val dao=db.dao()
+        val scope="10:7:101"
+        val oldVersion="c".repeat(64)
+        val newVersion="d".repeat(64)
+        try {
+            dao.setActiveScope(MobileActiveScopeEntity(scopeKey=scope,
+                scopeVersion="not-bootstrapped",status="bootstrapping"))
+            dao.applyMobileDeltaPage(scope,oldVersion,"101","bootstrap",
+                listOf(subscriber("1001",scope,oldVersion)),emptyList(),"initial",false,100L)
+            dao.applyMobileDeltaPage(scope,oldVersion,"101","delta",
+                listOf(subscriber("1002",scope,oldVersion)),emptyList(),"delta-in-progress",true,101L)
+            assertEquals("delta-in-progress",
+                dao.getIncompleteDeltaState(scope,oldVersion)?.cursor)
+            dao.quarantineActiveScope(scope)
+            dao.forgetIncompleteDelta(scope)
+            dao.applyMobileDeltaPage(scope,newVersion,"101","bootstrap",
+                listOf(subscriber("2001",scope,newVersion)),emptyList(),"new-cursor",false,200L)
+            assertNull(dao.getIncompleteDeltaState(scope,newVersion))
+            assertEquals(listOf("2001"),dao.getAllSubscribersFlow().first().map { it.id })
+            assertEquals("new-cursor",dao.getLatestCompletedSyncState(scope)?.cursor)
+        } finally { db.close() }
+    }
+
     @Test fun `Room 8 to 9 upgrade preserves legacy subscribers readings payments and events without showing unknown owner`() = runBlocking {
         val context=ApplicationProvider.getApplicationContext<Context>()
         val name="mobile-delta-v8-test.db"
