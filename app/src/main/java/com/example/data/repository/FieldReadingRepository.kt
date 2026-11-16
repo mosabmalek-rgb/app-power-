@@ -217,6 +217,31 @@ class FieldReadingRepository(
         } catch (e: IOException) {
             throw Exception("تعذر الاتصال بالخادم. يرجى التحقق من اتصال الإنترنت.")
         }
+        // Subscriber snapshots are not shared across accounts or branches.
+        // Keep a separate owner record that survives logout, because logout clears prefs.
+        val ownerPrefs = context.getSharedPreferences("field_cache_owner", Context.MODE_PRIVATE)
+        val newBranchId = session.user.branchIds.firstOrNull() ?: -1L
+        val newOwner = "${session.user.tenantId}:${session.user.id}:$newBranchId"
+        val previousOwner = ownerPrefs.getString("owner", null)
+        val oldProfileUserId = prefs.getLong("profile_user_id", -1L)
+        val oldBranchId = prefs.getLong("active_branch_id", -1L)
+        val knownSameOwner = previousOwner == newOwner ||
+            (previousOwner == null && oldProfileUserId == session.user.id && oldBranchId == newBranchId)
+        if (!knownSameOwner) {
+            val unsentReadings = listOf("pending", "syncing", "retryable", "needs_review")
+                .any { dao.getPendingReadingsWithStatus(it).isNotEmpty() }
+            val unsentPayments = listOf("pending", "syncing", "retryable", "needs_review")
+                .any { dao.getPendingPaymentsWithStatus(it).isNotEmpty() }
+            val unsentEvents = dao.getPendingSyncEvents().isNotEmpty()
+            if (unsentReadings || unsentPayments || unsentEvents) {
+                throw IllegalStateException(
+                    "لا يمكن تبديل الحساب أو الفرع: توجد عمليات ميدانية غير متزامنة تخص الحساب السابق. أعد الدخول بالحساب السابق وأكمل المزامنة أولاً."
+                )
+            }
+            dao.clearAllSubscribers()
+            prefs.edit().remove("last_subscriber_refresh_at").apply()
+        }
+        ownerPrefs.edit().putString("owner", newOwner).apply()
         sessionStore.save(session)
         prefs.edit().apply {
             putString("user_name", session.user.name ?: email.substringBefore("@"))
