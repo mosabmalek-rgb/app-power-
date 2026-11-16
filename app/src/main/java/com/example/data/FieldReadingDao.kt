@@ -109,6 +109,18 @@ interface FieldReadingDao {
     @Query("UPDATE pending_readings SET status = :status, retryCount = :retryCount, lastError = :lastError, lastAttemptAt = :lastAttemptAt WHERE localId = :localId")
     suspend fun updateReadingSyncState(localId: Int, status: String, retryCount: Int, lastError: String?, lastAttemptAt: Long)
 
+    @Query("""UPDATE pending_readings SET status=:status, retryCount=:retryCount,
+        lastError=:lastError, lastAttemptAt=:lastAttemptAt
+        WHERE localId=:localId AND scopeKey=:scopeKey""")
+    suspend fun updateScopedReadingSyncState(
+        localId: Int, scopeKey: String, status: String,
+        retryCount: Int, lastError: String?, lastAttemptAt: Long
+    ): Int
+
+    @Query("""UPDATE pending_readings SET status='pending', lastError=NULL
+        WHERE localId=:localId AND scopeKey=:scopeKey AND status='needs_review'""")
+    suspend fun requeueScopedReadingForReview(localId: Int,scopeKey: String): Int
+
     @Query("UPDATE pending_readings SET status = 'pending', lastError = NULL WHERE localId = :localId AND status = 'needs_review'")
     suspend fun requeueReadingForReview(localId: Int)
 
