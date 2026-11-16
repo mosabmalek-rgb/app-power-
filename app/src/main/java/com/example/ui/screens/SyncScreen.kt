@@ -139,6 +139,48 @@ fun SyncScreen(
                 }
             }
 
+            // Per-reading delivery state: local save is not server acceptance.
+            if (pendingReadings.isNotEmpty()) {
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(12.dp)
+                ) {
+                    Column(
+                        modifier = Modifier.padding(16.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Text("حالة كل قراءة", fontWeight = FontWeight.Bold, fontSize = 14.sp)
+                        pendingReadings.forEach { reading ->
+                            val stateLabel = when (reading.status) {
+                                "pending" -> "محفوظة على الجهاز — لم تُرسل"
+                                "syncing" -> "جارٍ الإرسال — لم يتأكد الاستلام"
+                                "retryable" -> "تعذر الإرسال — ستُعاد المحاولة"
+                                "needs_review" -> "تحتاج مراجعة فنية"
+                                "synced" -> "وصلت إلى الخادم"
+                                else -> "حالة غير معروفة: ${reading.status}"
+                            }
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text("مشترك #${reading.subscriberId} — ${reading.currentReading}", fontSize = 12.sp, modifier = Modifier.weight(1f))
+                                Text(
+                                    stateLabel,
+                                    fontSize = 11.sp,
+                                    color = if (reading.status == "synced") MaterialTheme.colorScheme.primary
+                                        else MaterialTheme.colorScheme.error
+                                )
+                            }
+                            if (reading.status == "needs_review" && !reading.lastError.isNullOrBlank()) {
+                                Text(reading.lastError.orEmpty(), fontSize = 11.sp)
+                            }
+                            HorizontalDivider()
+                        }
+                    }
+                }
+            }
+
             if (needsReviewReadings.isNotEmpty()) {
                 Card(
                     modifier = Modifier.fillMaxWidth(),
