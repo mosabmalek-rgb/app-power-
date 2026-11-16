@@ -21,6 +21,7 @@ import com.example.data.api.MobileSessionStore
 import com.example.data.api.MobileSyncEventRequest
 import com.example.data.api.RemoteConfigRepository
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.sync.withLock
 import retrofit2.HttpException
 import org.json.JSONObject
 import java.io.File
