@@ -277,6 +277,8 @@ class FieldReadingRepository(
 
     private val subscriberRefreshMutex = kotlinx.coroutines.sync.Mutex()
 
+    fun lastSubscriberRefreshAt(): Long = prefs.getLong("last_subscriber_refresh_at", 0L)
+
     suspend fun refreshSubscribersIfStale(maxAgeMillis: Long = 2 * 60 * 60 * 1000L): Result<Unit> {
         if (!isLoggedIn()) return Result.success(Unit)
         val last = prefs.getLong("last_subscriber_refresh_at", 0L)
