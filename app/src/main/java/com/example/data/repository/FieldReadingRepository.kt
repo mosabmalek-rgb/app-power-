@@ -474,6 +474,7 @@ class FieldReadingRepository(
             }
             android.util.Log.d("PowerHubSync",
                 "Delta complete; pages=$pages records=$totalTransferred")
+            Unit
         }
     }
 
