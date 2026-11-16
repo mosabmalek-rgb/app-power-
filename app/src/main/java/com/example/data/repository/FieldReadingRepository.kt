@@ -285,6 +285,8 @@ class FieldReadingRepository(
     suspend fun saveReading(subscriberId: String, currentReading: Double, notes: String, latitude: Double, longitude: Double, photoPath: String?, isReadingReset: Boolean, cycleRange: com.example.data.CycleDateRange, fieldVerified: Boolean = true, readingValueText: String? = null): Result<Unit> {
         requireSubscriptionForOffline()
         requireLocalOwner()
+        val active=dao.getActiveScope()
+        check(active?.scopeKey==currentScopeKey() && active.status=="ready") { "نطاق البيانات المحلية غير جاهز." }
         val subscriber = dao.getSubscriberById(subscriberId) ?: return Result.failure(Exception("لم يتم العثور على بيانات هذا المشترك على الجهاز."))
         if (subscriber.branchId != activeBranchId().toString()) {
             return Result.failure(IllegalStateException("هذا المشترك لا ينتمي إلى الفرع المصرح به على الجهاز."))
@@ -302,7 +304,7 @@ class FieldReadingRepository(
         val zone = TimeZone.getTimeZone(cycleRange.timeZoneId)
         val startText = SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.US).apply { timeZone = zone }.format(Date(cycleRange.startMillis))
         val endExclusiveText = SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.US).apply { timeZone = zone }.format(Date(cycleRange.endMillis + 1L))
-        val reading = PendingReadingEntity(subscriberId = subscriberId, currentReading = currentReading, readingDate = currentDateTime(), notes = notes, latitude = latitude, longitude = longitude, photoPath = photoPath, status = "pending", isReadingReset = isReadingReset, fieldVerified = fieldVerified, readingValueText = normalizedReadingText, readingCycleKey = cycleKey)
+        val reading = PendingReadingEntity(subscriberId = subscriberId, currentReading = currentReading, readingDate = currentDateTime(), notes = notes, latitude = latitude, longitude = longitude, photoPath = photoPath, status = "pending", isReadingReset = isReadingReset, fieldVerified = fieldVerified, readingValueText = normalizedReadingText, readingCycleKey = cycleKey, scopeKey = currentScopeKey())
         if (!dao.insertPendingReadingIfNoReadingInCycle(reading, cycleKey, startText, endExclusiveText)) {
             return Result.failure(Exception("توجد قراءة محفوظة لهذا المشترك في دورة القراءة الحالية، محلية أو على الخادم."))
         }
@@ -312,9 +314,11 @@ class FieldReadingRepository(
     suspend fun savePayment(subscriberId: String, amount: Double, paymentMethod: String, notes: String): Boolean {
         if (amount <= 0) return false
         requireLocalOwner()
+        val active=dao.getActiveScope()
+        if(active?.scopeKey!=currentScopeKey() || active.status!="ready")return false
         val subscriber = dao.getSubscriberById(subscriberId) ?: return false
         if (subscriber.branchId != activeBranchId().toString()) return false
-        dao.insertPendingPayment(PendingPaymentEntity(subscriberId = subscriberId, amount = amount, paymentMethod = paymentMethod, notes = notes, status = "pending"))
+        dao.insertPendingPayment(PendingPaymentEntity(subscriberId = subscriberId, amount = amount, paymentMethod = paymentMethod, notes = notes, status = "pending", scopeKey = currentScopeKey()))
         return true
     }
 
@@ -330,7 +334,7 @@ class FieldReadingRepository(
         val userId=currentProfileUserId()?:-1L
         val branchId=activeBranchId()
         check(tenantId>0L && userId>0L && branchId>0L)
-        return "$" + "{tenantId}:$" + "{userId}:$" + "{branchId}"
+        return "$tenantId:$userId:$branchId"
     }
 
     private fun requireLocalOwner() {
@@ -469,7 +473,7 @@ class FieldReadingRepository(
                 }
             }
             android.util.Log.d("PowerHubSync",
-                "Delta complete; pages=$" + "pages records=$" + "totalTransferred")
+                "Delta complete; pages=$pages records=$totalTransferred")
         }
     }
 
@@ -481,7 +485,10 @@ class FieldReadingRepository(
             val branchId = activeBranchId()
             if (branchId <= 0) throw IllegalStateException("حدّث قائمة المشتركين أولاً لتحديد الفرع المسموح.")
             flushPendingSyncEvents()
-            val readings = dao.getPendingReadingsWithStatus("pending") + dao.getPendingReadingsWithStatus("retryable")
+            val scopeKey=currentScopeKey()
+            dao.resetInterruptedReadings(scopeKey)
+            val readings = dao.getScopedPendingReadingsWithStatus(scopeKey,"pending") +
+                dao.getScopedPendingReadingsWithStatus(scopeKey,"retryable")
             if (readings.isEmpty()) {
                 val summary = SyncSummary(0, 0, 0)
                 queueSyncEvent(branchId, "sync_cycle", "success", summary)
@@ -525,7 +532,7 @@ class FieldReadingRepository(
             }
             onProgress(100, "اكتمل إرسال القراءات: $synced ناجحة، $retryable ستُعاد تلقائياً، $needsReview تحتاج مراجعة.")
             if (synced > 0) {
-                dao.clearSyncedReadings()
+                dao.clearSyncedReadingsForScope(scopeKey)
                 // Refresh the server-authoritative meter baseline after successful uploads.
                 // This keeps platform-entered readings and field-entered readings in sync
                 // without discarding any unsynced local work.
@@ -544,12 +551,13 @@ class FieldReadingRepository(
     suspend fun requeueReadingForReview(localId: Int) = dao.requeueReadingForReview(localId)
 
     private suspend fun queueSyncEvent(branchId: Long, eventType: String, status: String, summary: SyncSummary, errorCode: String? = null, errorMessage: String? = null) {
-        dao.insertPendingSyncEvent(PendingSyncEventEntity(branchId = branchId, eventType = eventType, status = status, syncedCount = summary.synced, retryableCount = summary.retryable, needsReviewCount = summary.needsReview, errorCode = errorCode, errorMessage = errorMessage?.take(1500)))
+        dao.insertPendingSyncEvent(PendingSyncEventEntity(branchId = branchId, eventType = eventType, status = status, syncedCount = summary.synced, retryableCount = summary.retryable, needsReviewCount = summary.needsReview, errorCode = errorCode, errorMessage = errorMessage?.take(1500), scopeKey = currentScopeKey()))
         runCatching { flushPendingSyncEvents() }
     }
 
     private suspend fun flushPendingSyncEvents() {
-        dao.getPendingSyncEvents().forEach { event ->
+        dao.getScopedPendingSyncEvents(currentScopeKey()).forEach { event ->
+            check(event.branchId==activeBranchId()) { "أوقفت إرسال حدث من نطاق فرع آخر." }
             api.createSyncEvent(MobileSyncEventRequest(event.eventKey, event.branchId, event.eventType, event.status, event.syncedCount, event.retryableCount, event.needsReviewCount, event.errorCode, event.errorMessage, BuildConfig.VERSION_NAME, deviceLabel(), epochToUtc(event.createdAt)))
             dao.deletePendingSyncEvent(event.localId)
         }
