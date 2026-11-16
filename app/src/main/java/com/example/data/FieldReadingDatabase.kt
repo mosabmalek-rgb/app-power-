@@ -12,9 +12,11 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         SubscriberEntity::class,
         PendingReadingEntity::class,
         PendingPaymentEntity::class,
-        PendingSyncEventEntity::class
+        PendingSyncEventEntity::class,
+        MobileActiveScopeEntity::class,
+        MobileSyncStateEntity::class
     ],
-    version = 8,
+    version = 9,
     exportSchema = false
 )
 abstract class FieldReadingDatabase : RoomDatabase() {
@@ -77,6 +79,57 @@ abstract class FieldReadingDatabase : RoomDatabase() {
             }
         }
 
+        // Every pre-v9 row is quarantined as __legacy__ until the old signed
+        // account/branch identity is verified. No destructive migration or
+        // deletion of unsent reading/payment queues is permitted.
+        internal val MIGRATION_8_9 = object : Migration(8, 9) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("""
+                    CREATE TABLE IF NOT EXISTS subscribers_v9 (
+                      id TEXT NOT NULL, refNumber TEXT NOT NULL, name TEXT NOT NULL,
+                      phone TEXT NOT NULL, address TEXT NOT NULL, branchId TEXT NOT NULL,
+                      lastReading REAL NOT NULL, lastReadingDate TEXT NOT NULL,
+                      balance REAL NOT NULL, hasReadingInCurrentCycle INTEGER NOT NULL,
+                      cycleReadingValue TEXT, cycleReadingAt TEXT, cycleReadingStatus TEXT,
+                      currentCycleKey TEXT, scopeKey TEXT NOT NULL,
+                      scopeVersion TEXT NOT NULL, isVisible INTEGER NOT NULL,
+                      bootstrapMarker TEXT, PRIMARY KEY(scopeKey,id)
+                    )
+                """.trimIndent())
+                db.execSQL("""
+                    INSERT INTO subscribers_v9(
+                      id,refNumber,name,phone,address,branchId,lastReading,lastReadingDate,
+                      balance,hasReadingInCurrentCycle,cycleReadingValue,cycleReadingAt,
+                      cycleReadingStatus,currentCycleKey,scopeKey,scopeVersion,isVisible,bootstrapMarker
+                    )
+                    SELECT id,refNumber,name,phone,address,branchId,lastReading,lastReadingDate,
+                      balance,hasReadingInCurrentCycle,cycleReadingValue,cycleReadingAt,
+                      cycleReadingStatus,currentCycleKey,'__legacy__','__legacy__',0,NULL
+                    FROM subscribers
+                """.trimIndent())
+                db.execSQL("DROP TABLE subscribers")
+                db.execSQL("ALTER TABLE subscribers_v9 RENAME TO subscribers")
+                db.execSQL("CREATE INDEX index_subscribers_scopeKey_branchId ON subscribers(scopeKey,branchId)")
+                db.execSQL("ALTER TABLE pending_readings ADD COLUMN scopeKey TEXT NOT NULL DEFAULT '__legacy__'")
+                db.execSQL("ALTER TABLE pending_payments ADD COLUMN scopeKey TEXT NOT NULL DEFAULT '__legacy__'")
+                db.execSQL("ALTER TABLE pending_sync_events ADD COLUMN scopeKey TEXT NOT NULL DEFAULT '__legacy__'")
+                db.execSQL("""
+                    CREATE TABLE IF NOT EXISTS mobile_active_scope(
+                      id INTEGER NOT NULL PRIMARY KEY, scopeKey TEXT NOT NULL,
+                      scopeVersion TEXT NOT NULL, status TEXT NOT NULL
+                    )
+                """.trimIndent())
+                db.execSQL("""
+                    CREATE TABLE IF NOT EXISTS mobile_sync_states(
+                      scopeKey TEXT NOT NULL,scopeVersion TEXT NOT NULL,
+                      cursor TEXT NOT NULL,mode TEXT NOT NULL,bootstrapMarker TEXT,
+                      pageCount INTEGER NOT NULL,lastAppliedAt INTEGER NOT NULL,
+                      completed INTEGER NOT NULL, PRIMARY KEY(scopeKey,scopeVersion)
+                    )
+                """.trimIndent())
+            }
+        }
+
         @Volatile
         private var INSTANCE: FieldReadingDatabase? = null
 
@@ -87,7 +140,7 @@ abstract class FieldReadingDatabase : RoomDatabase() {
                     FieldReadingDatabase::class.java,
                     "field_reading_database"
                 )
-                .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8)
+                .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9)
                 .build()
                 INSTANCE = instance
                 instance
