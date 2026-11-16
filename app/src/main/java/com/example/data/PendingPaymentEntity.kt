@@ -12,5 +12,6 @@ data class PendingPaymentEntity(
     val notes: String,
     val status: String, // "pending", "synced", "failed"
     val clientReferenceId: String = java.util.UUID.randomUUID().toString(),
-    val createdAt: Long = System.currentTimeMillis()
+    val createdAt: Long = System.currentTimeMillis(),
+    val scopeKey: String = "__legacy__"
 )
