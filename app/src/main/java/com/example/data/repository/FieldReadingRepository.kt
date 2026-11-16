@@ -246,6 +246,7 @@ class FieldReadingRepository(
         prefs.edit().apply {
             putString("user_name", session.user.name ?: email.substringBefore("@"))
             putLong("profile_user_id", session.user.id)
+            putLong("profile_tenant_id", session.user.tenantId)
             putString("user_role", session.user.role)
             putString("company_name", "PowerHub")
             putLong("active_branch_id", session.user.branchIds.firstOrNull() ?: -1L)
@@ -273,6 +274,7 @@ class FieldReadingRepository(
 
     suspend fun saveReading(subscriberId: String, currentReading: Double, notes: String, latitude: Double, longitude: Double, photoPath: String?, isReadingReset: Boolean, cycleRange: com.example.data.CycleDateRange, fieldVerified: Boolean = true, readingValueText: String? = null): Result<Unit> {
         requireSubscriptionForOffline()
+        requireLocalOwner()
         val subscriber = dao.getSubscriberById(subscriberId) ?: return Result.failure(Exception("لم يتم العثور على بيانات هذا المشترك على الجهاز."))
         val normalizedReadingText = ReadingValuePrecision.normalizeForSync(currentReading, readingValueText)
             ?: return Result.failure(Exception("القراءة يجب أن تكون رقماً صحيحاً أو تحتوي على منزلة أو منزلتين عشريتين كحد أقصى."))
@@ -296,11 +298,24 @@ class FieldReadingRepository(
 
     suspend fun savePayment(subscriberId: String, amount: Double, paymentMethod: String, notes: String): Boolean {
         if (amount <= 0) return false
+        requireLocalOwner()
         dao.insertPendingPayment(PendingPaymentEntity(subscriberId = subscriberId, amount = amount, paymentMethod = paymentMethod, notes = notes, status = "pending"))
         return true
     }
 
     private val subscriberRefreshMutex = kotlinx.coroutines.sync.Mutex()
+
+    private fun requireLocalOwner() {
+        val tenantId = prefs.getLong("profile_tenant_id", -1L)
+        val userId = currentProfileUserId() ?: -1L
+        val branchId = activeBranchId()
+        val expected = "$tenantId:$userId:$branchId"
+        val recorded = context.getSharedPreferences("field_cache_owner", Context.MODE_PRIVATE)
+            .getString("owner", null)
+        check(tenantId > 0L && userId > 0L && branchId > 0L && recorded == expected) {
+            "بيانات هذا الجهاز تخص حساباً أو فرعاً آخر. أعد تسجيل الدخول قبل العمل الميداني."
+        }
+    }
 
     fun lastSubscriberRefreshAt(): Long = prefs.getLong("last_subscriber_refresh_at", 0L)
 
@@ -313,6 +328,7 @@ class FieldReadingRepository(
 
     suspend fun refreshSubscribers(): Result<Unit> = subscriberRefreshMutex.withLock {
         runCatching {
+        requireLocalOwner()
         ensureActiveAccessToken()
         val profile = api.getProfile().user
         val branchId = activeBranchId()
@@ -355,6 +371,7 @@ class FieldReadingRepository(
 
     suspend fun syncAllData(onProgress: (Int, String) -> Unit): Result<SyncSummary> {
         requireSubscriptionForOffline()
+        requireLocalOwner()
         val outcome = runCatching {
             ensureActiveAccessToken()
             val branchId = activeBranchId()
