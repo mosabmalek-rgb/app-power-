@@ -24,6 +24,9 @@ class FieldReadingViewModel(application: Application) : AndroidViewModel(applica
     // UI Session State
     private val _isLoggedIn = MutableStateFlow(repository.isLoggedIn())
     val isLoggedIn: StateFlow<Boolean> = _isLoggedIn.asStateFlow()
+
+    private val _lastSubscriberRefreshAt = MutableStateFlow(repository.lastSubscriberRefreshAt())
+    val lastSubscriberRefreshAt: StateFlow<Long> = _lastSubscriberRefreshAt.asStateFlow()
     private val _mustChangePassword = MutableStateFlow(repository.mustChangePassword())
     val mustChangePassword: StateFlow<Boolean> = _mustChangePassword.asStateFlow()
 
@@ -88,6 +91,7 @@ class FieldReadingViewModel(application: Application) : AndroidViewModel(applica
         if (!_isOnline.value) return Result.failure(IllegalStateException("لا يوجد اتصال إنترنت متحقق لتحديث دورة القراءة."))
         val result = repository.refreshSubscribers()
         if (result.isSuccess) {
+            _lastSubscriberRefreshAt.value = repository.lastSubscriberRefreshAt()
             _readingCycleType.value = repository.getReadingCycleType()
             _weeklyCycleStartDay.value = repository.getWeeklyCycleStartDay()
             repository.getSavedCycleRange()?.let { _currentCycleRange.value = it }
