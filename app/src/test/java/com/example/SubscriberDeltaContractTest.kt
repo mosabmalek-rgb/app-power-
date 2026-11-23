@@ -54,4 +54,43 @@ class SubscriberDeltaContractTest {
         validatePage(page(mode="delta"),1,2,7,"old",false,"a".repeat(64),"cycle-1")
         assertEquals(0,page().transferredCount)
     }
+    @Test fun rejectsTenantAndUserMismatch() {
+        assertThrows(IllegalArgumentException::class.java) {
+            validatePage(page(), 99, 2, 7, null, true, null, null)
+        }
+        assertThrows(IllegalArgumentException::class.java) {
+            validatePage(page(), 1, 99, 7, null, true, null, null)
+        }
+    }
+
+    @Test fun rejectsDuplicateUpsertsAndDeletes() {
+        val subscriber = MobileSubscriberDto(5, "S5", "reader", "123", null, 7, null, null)
+        assertThrows(IllegalArgumentException::class.java) {
+            validatePage(page(upserts=listOf(subscriber, subscriber)),
+                1, 2, 7, null, true, null, null)
+        }
+        assertThrows(IllegalArgumentException::class.java) {
+            validatePage(page(deletes=listOf(5, 5)),
+                1, 2, 7, null, true, null, null)
+        }
+    }
+
+    @Test fun rejectsScopeOrCycleChangeAcrossPages() {
+        assertThrows(IllegalArgumentException::class.java) {
+            validatePage(page(mode="delta"), 1, 2, 7,
+                "previous", false, "b".repeat(64), "cycle-1")
+        }
+        assertThrows(IllegalArgumentException::class.java) {
+            validatePage(page(mode="delta"), 1, 2, 7,
+                "previous", false, "a".repeat(64), "older-cycle")
+        }
+    }
+
+    @Test fun rejectsWrongPageModeForInitialBootstrap() {
+        assertThrows(IllegalArgumentException::class.java) {
+            validatePage(page(mode="delta"), 1, 2, 7,
+                null, true, null, null)
+        }
+    }
+
 }
