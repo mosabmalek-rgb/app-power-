@@ -169,4 +169,48 @@ class SubscriberDeltaRoomTest {
         assertEquals("cursor-after-page-one", dao.readDeltaState()?.cursor)
     }
 
+    @Test fun acknowledgedCleanupNeverRemovesUnsentOrReviewReadings() = runBlocking {
+        val states = listOf("synced", "pending", "retryable", "needs_review", "syncing")
+        val ids = mutableMapOf<String, Int>()
+        for (status in states) {
+            ids[status] = dao.insertPendingReading(PendingReadingEntity(
+                subscriberId = "1",
+                currentReading = 18.0,
+                readingDate = "2026-11-01 12:00",
+                notes = status,
+                latitude = 0.0, longitude = 0.0,
+                photoPath = null, status = status,
+                clientReferenceId = "original-key-$status"
+            )).toInt()
+        }
+
+        // Call this only after a successfully completed upload + Delta cycle.
+        dao.clearSyncedReadings()
+        assertEquals(0, dao.getPendingReadingsWithStatus("synced").size)
+        for (status in states.filter { it != "synced" }) {
+            val remaining = dao.getPendingReadingsWithStatus(status)
+            assertEquals(status, 1, remaining.size)
+            assertEquals("original-key-$status", remaining.single().clientReferenceId)
+            assertEquals(ids[status], remaining.single().localId)
+        }
+    }
+
+    @Test fun accountSwitchWithAcknowledgedHistoryStillFailsClosed() = runBlocking {
+        dao.insertPendingReading(PendingReadingEntity(
+            subscriberId = "1",
+            currentReading = 22.0,
+            readingDate = "2026-11-01 12:00",
+            notes = "history",
+            latitude = 0.0, longitude = 0.0,
+            photoPath = null,
+            status = "synced"
+        ))
+        dao.insertSubscribers(listOf(row("1", "protected")))
+        assertThrows(IllegalStateException::class.java) {
+            runBlocking { dao.clearSubscriberCacheForIdentityChange() }
+        }
+        assertNotNull(dao.getSubscriberById("1"))
+        assertEquals(1, dao.getPendingReadingsWithStatus("synced").size)
+    }
+
 }
