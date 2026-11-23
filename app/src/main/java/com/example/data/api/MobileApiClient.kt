@@ -84,6 +84,28 @@ class MobileSessionStore(context: Context) {
             .apply()
     }
 
+    /**
+     * A late suspend refresh response may arrive after logout or a new login.
+     * Never overwrite a newer session or resurrect one that was cleared.
+     * The same monitor also protects authenticator-based rotation/revocation.
+     */
+    fun saveRefreshResponseIfCurrent(
+        expectedRefreshToken: String,
+        response: MobileSessionResponse
+    ): Boolean = synchronized(mobileSessionRefreshLock) {
+        if (prefs.getString("refresh_token", null) != expectedRefreshToken ||
+            prefs.getString("access_token", null).isNullOrBlank()) {
+            return@synchronized false
+        }
+        prefs.edit()
+            .putString("access_token", response.accessToken)
+            .putString("refresh_token", response.refreshToken)
+            .putLong("access_expires_at", System.currentTimeMillis() + response.expiresIn * 1000L)
+            .putLong("subscription_ends_at", java.time.Instant.parse(response.user.subscriptionEndsAt).toEpochMilli())
+            .putLong("last_wall_clock_ms", System.currentTimeMillis())
+            .commit()
+    }
+
     /** Save a successful token rotation without touching offline work or local PIN settings. */
     fun saveRefreshedSession(
         accessToken: String,
