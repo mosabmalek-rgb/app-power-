@@ -10,6 +10,7 @@ import com.example.data.SubscriberEntity
 import com.example.data.PendingPaymentEntity
 import com.example.data.PendingReadingEntity
 import com.example.data.api.FieldReadingApi
+import com.example.data.api.MobileSubscribersResponse
 import com.example.data.api.MobileMeResponse
 import com.example.data.api.MobileReadingCycleBoundsDto
 import com.example.data.api.MobileReadingCycleConfigDto
@@ -67,6 +68,10 @@ class FieldReadingSyncConcurrencyTest {
     private val heldAck = CompletableDeferred<MobileReadingResponse>()
     @Volatile private var replyImmediatelyAfterFirst = false
     @Volatile private var failDelta = false
+    @Volatile private var legacyOnlyServer = false
+    @Volatile private var legacyBreakSecondPage = false
+    @Volatile private var legacyDuplicateId = false
+    private val legacyCalls = AtomicInteger(0)
     @Volatile private var revokeDelta = false
     @Volatile private var profileNoBranches = false
     @Volatile private var profileForeignIdentity = false
@@ -125,6 +130,11 @@ class FieldReadingSyncConcurrencyTest {
                 )
             )
             "getSubscribersDelta" -> {
+                if (legacyOnlyServer) {
+                    throw HttpException(Response.error<Any>(
+                        404, """{"error":{"code":"NOT_FOUND"}}""".toResponseBody()
+                    ))
+                }
                 if (revokeDelta) {
                     throw HttpException(Response.error<Any>(
                         403, """{"error":{"code":"BRANCH_ACCESS_DENIED"}}""".toResponseBody()
@@ -149,6 +159,19 @@ class FieldReadingSyncConcurrencyTest {
                     hasMore = false, requiresBootstrap = false,
                     serverTime = "2026-11-23T00:00:00Z",
                     transferredCount = if (bootstrap) 1 else 0
+                )
+            }
+            "getSubscribers" -> {
+                val n = legacyCalls.incrementAndGet()
+                if (legacyBreakSecondPage && n == 2) {
+                    throw java.io.IOException("Synthetic legacy page failure")
+                }
+                val subId = if (legacyDuplicateId) 15L else 14L + n
+                MobileSubscribersResponse(
+                    items = listOf(MobileSubscriberDto(
+                        subId, "S" + subId, "Legacy " + n, "", null, 7L, "5", null
+                    )),
+                    nextCursor = if (n == 1) "legacy-next" else null
                 )
             }
             "createSyncEvent" -> MobileSyncEventResponse(501L, false)
