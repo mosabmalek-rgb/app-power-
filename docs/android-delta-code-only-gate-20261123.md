@@ -108,3 +108,21 @@ serialized against active reading uploads.
 
 These are in-process Robolectric / synthetic API tests, not hosted acceptance.
 The code-side gate is accepted only on a successful latest-HEAD Android CI.
+
+## Account profile and delayed token refresh safety
+- A successful HTTP 200 mobile profile no longer implicitly authorizes a
+  previously pinned branch. A removed branch is durably quarantined before
+  any attempt to adopt another branch. A profile with zero authorized branches
+  fails closed; cached rows and unsent offline operations remain on disk.
+- A profile whose tenant/user does not match the currently stored session
+  fails before mutating the cache scope, branch preference or Room snapshot.
+- The coroutine-based token refresh uses a compare-and-swap keyed on its
+  original refresh token. A response arriving after logout, fresh login or
+  HTTP-authenticator token rotation cannot overwrite newer credentials or
+  resurrect cleared credentials.
+
+Tests: `MobileSessionRefreshRaceTest` covers stale response/login/logout/
+authenticator races and preservation of the local PIN. The additional
+`FieldReadingSyncConcurrencyTest` scenarios cover a 200 profile with zero
+branches, a foreign tenant, and reassignment to a different branch with
+unsent offline work. All use only synthetic local data.
