@@ -118,6 +118,9 @@ class FieldReadingRepository(
     private suspend fun bindSubscriberScope(scope: String) {
         val previous = prefs.getString("subscriber_cache_scope", null)
         if (previous == scope) return
+        // Never display rows from the old scope while a new account or branch
+        // is being verified and its cache is being cleared.
+        cacheVisibility.value = false
         // Only adopt pre-v9 local rows when their existing signed-session identity
         // agrees with the server-confirmed profile; never discard its outbox.
         val components = scope.split(':').mapNotNull(String::toLongOrNull)
