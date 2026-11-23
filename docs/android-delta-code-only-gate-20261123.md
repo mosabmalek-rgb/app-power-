@@ -88,3 +88,23 @@ Scenarios now covered:
 A successful fake HTTP round-trip verifies in-process sequencing only, not
 cross-process locking or live server-side idempotency. The actual post-change
 CI result on the latest commit remains the acceptance criterion.
+
+## Manual Delta versus WorkManager upload — serialized code gate
+Public `refreshSubscribers()` now takes `uploadSyncMutex` before
+`accountScopeMutex`, matching login/logout. An internal
+`refreshSubscribersWithinUploadLock()` is used only from
+`syncAllData()`, which already owns the upload mutex. This prevents
+deadlock through recursive acquisition while keeping branch/profile changes
+serialized against active reading uploads.
+
+`FieldReadingSyncConcurrencyTest` additionally checks:
+- A manual refresh waits for the worker's unacknowledged reading upload.
+  The manual and worker Delta requests run sequentially, with one reading post.
+- Cancellation of a waiting manual refresh sends no Delta request and does
+  not block the active worker.
+- HTTP 403 during manual Delta persists cache quarantine, hides subscriber/
+  reading/payment flows immediately and after repository recreation, and
+  preserves local subscriber rows and pending reading/payment reference keys.
+
+These are in-process Robolectric / synthetic API tests, not hosted acceptance.
+The code-side gate is accepted only on a successful latest-HEAD Android CI.
