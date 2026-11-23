@@ -482,8 +482,10 @@ class FieldReadingRepository(
         if (preflight != null) return@withLock Result.failure(preflight)
         val originalScope = currentCacheScope()
         val originalSession = currentMobileSessionKey()
-        check(originalScope != null && originalSession != null) {
-            "Authenticated sync scope is unavailable"
+        if (originalScope == null || originalSession == null) {
+            return@withLock Result.failure(
+                IllegalStateException("Authenticated sync scope is unavailable")
+            )
         }
         val outcome = runCatching {
             ensureActiveAccessToken()
@@ -491,7 +493,6 @@ class FieldReadingRepository(
                 currentMobileSessionKey() == originalSession) {
                 "Session changed before sync upload"
             }
-            ensureActiveAccessToken()
             val branchId = activeBranchId()
             if (branchId <= 0) throw IllegalStateException("حدّث قائمة المشتركين أولاً لتحديد الفرع المسموح.")
             flushPendingSyncEvents()
@@ -551,6 +552,11 @@ class FieldReadingRepository(
                     }
                     throw cancelled
                 } catch (error: Exception) {
+                    // A changed account/session is not a per-reading network failure.
+                    // Leave the original outbox untouched for recovery by its owner.
+                    if (currentCacheScope() != originalScope ||
+                        currentMobileSessionKey() != originalSession ||
+                        subscriberCacheTrust.isQuarantined()) throw error
                     val issue = classifySyncFailure(error)
                     dao.updateReadingSyncState(reading.localId, issue.status, reading.retryCount + 1, issue.message, System.currentTimeMillis())
                     val diagnosticCode = issue.errorCode
@@ -572,8 +578,15 @@ class FieldReadingRepository(
             summary
         }
         outcome.exceptionOrNull()?.let { if (it is CancellationException) throw it }
-        if (outcome.isFailure) {
-            activeBranchId().takeIf { it > 0 }?.let { branchId -> queueSyncEvent(branchId, "sync_error", "retryable", SyncSummary(0, 0, 0), "SYNC_CYCLE_ERROR", outcome.exceptionOrNull()?.message) }
+        if (outcome.isFailure &&
+            currentCacheScope() == originalScope &&
+            currentMobileSessionKey() == originalSession &&
+            !subscriberCacheTrust.isQuarantined()) {
+            activeBranchId().takeIf { it > 0 }?.let { branchId ->
+                queueSyncEvent(branchId, "sync_error", "retryable",
+                    SyncSummary(0, 0, 0), "SYNC_CYCLE_ERROR",
+                    outcome.exceptionOrNull()?.message)
+            }
         }
         outcome
     }
