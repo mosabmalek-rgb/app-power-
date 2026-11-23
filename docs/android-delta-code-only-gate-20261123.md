@@ -46,3 +46,22 @@ deterministic code-side regression tests, not device or live HTTP tests.
 Acceptance: only mark this gate PASS after Android CI completes successfully
 for the *latest* branch HEAD. A successful run against an older commit
 does not establish acceptance for subsequent code changes.
+
+## Room v8 -> v9 disk migration (Robolectric only)
+`FieldReadingRoomV8ToV9MigrationTest` creates a file-backed SQLite
+database whose v8 tables mirror the pre-Delta Room entities, seeds all five
+reading statuses, a payment and a pending sync event, and opens it with
+the production `MIGRATION_8_9` object through `Room.databaseBuilder`.
+
+The assertions cover old subscriber cycle fields, original reading and
+payment `clientReferenceId`, event `eventKey`, reading retry metadata,
+the new empty Delta state/staging tables, survival after database close/reopen,
+and preservation of all offline work during a subsequent staged Bootstrap.
+
+A second test injects a migration that creates a table then throws,
+verifies SQLite rolls the schema and version back to v8 without losing
+legacy records, and retries using the production migration.
+
+This fixture checks legacy schema shape but is not an exported Room v8
+schema JSON or real user's database. Test success is bounded by that fixture.
+No destructive fallback migration or hosted database change is introduced.
