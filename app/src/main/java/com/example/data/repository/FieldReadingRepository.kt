@@ -22,6 +22,8 @@ import com.example.data.api.MobileSessionStore
 import com.example.data.api.MobileSyncEventRequest
 import com.example.data.api.RemoteConfigRepository
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.MutableStateFlow
 import retrofit2.HttpException
@@ -46,6 +48,12 @@ class FieldReadingRepository(
     private val dao: FieldReadingDao,
     private val sessionStore: MobileSessionStore = MobileSessionStore(context)
 ) {
+    private companion object {
+        // Shared by UI and WorkManager repositories. Login and Delta commit must
+        // not change the authenticated identity during each other's operation.
+        val accountScopeMutex = Mutex()
+    }
+
     private fun requireSubscriptionForOffline() { if (!sessionStore.subscriptionAllowsOfflineNow()) throw IllegalStateException("انتهت صلاحية اشتراك PowerHub. يلزم تجديد الاشتراك والاتصال بالإنترنت.") }
 
     private val remoteConfig = RemoteConfigRepository(context)
@@ -295,7 +303,8 @@ class FieldReadingRepository(
         }
     }
 
-    suspend fun login(email: String, password: String, remember: Boolean): Result<Unit> = runCatching {
+    suspend fun login(email: String, password: String, remember: Boolean): Result<Unit> =
+        accountScopeMutex.withLock { runCatching {
         refreshApiBaseUrl()
         val session = try {
             api.login(MobileLoginRequest(email = email.trim().lowercase(), password = password, deviceLabel = "Android Field Reader"))
@@ -336,7 +345,7 @@ class FieldReadingRepository(
             apply()
         }
         refreshCacheVisibility()
-    }
+    } }
 
     suspend fun changeTemporaryPassword(newPassword: String): Result<Unit> = runCatching {
         ensureActiveAccessToken()
@@ -399,7 +408,8 @@ class FieldReadingRepository(
         return true
     }
 
-    suspend fun refreshSubscribers(): Result<Unit> = runCatching {
+    suspend fun refreshSubscribers(): Result<Unit> =
+        accountScopeMutex.withLock { runCatching {
         ensureActiveAccessToken()
         val profile = api.getProfile().user
         val branchId = activeBranchId().takeIf { it in profile.branchIds }
@@ -428,7 +438,7 @@ class FieldReadingRepository(
                 }
             }
         )
-    }
+    } }
 
     suspend fun syncAllData(onProgress: (Int, String) -> Unit): Result<SyncSummary> {
         runCatching {
