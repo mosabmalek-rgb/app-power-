@@ -74,6 +74,13 @@ class FieldReadingRepository(
         } == true
     }
 
+    private fun requireVerifiedCacheScope() {
+        val current = currentCacheScope()
+        check(current != null && current == prefs.getString("subscriber_cache_scope", null)) {
+            "Offline data is not bound to the authenticated account, tenant and branch"
+        }
+    }
+
     private suspend fun bindSubscriberScope(scope: String) {
         val previous = prefs.getString("subscriber_cache_scope", null)
         if (previous == scope) return
@@ -257,8 +264,18 @@ class FieldReadingRepository(
             session.user.branchIds.firstOrNull() ?: -1L
         )
         val previousScope = currentCacheScope()
-        if (previousScope != null && previousScope != newScope ||
-            prefs.getString("subscriber_cache_scope", null)?.let { it != newScope } == true) {
+        // Unknown pre-v9 provenance cannot safely accompany a different login.
+        // No credential rotation happens until the offline outbox is verified.
+        val pinnedScope = prefs.getString("subscriber_cache_scope", null)
+        if (pinnedScope == null) {
+            check(!dao.hasUnsentWork()) {
+                "There is unassigned offline work on this device; keep the original account and reconcile it before login."
+            }
+            check(dao.anyReadingCount() == 0 && dao.anyPaymentCount() == 0 &&
+                dao.anyEventCount() == 0) {
+                "Previous account's offline history needs reconciliation before login."
+            }
+        } else if (pinnedScope != newScope || previousScope != null && previousScope != newScope) {
             dao.clearSubscriberCacheForIdentityChange()
         }
         sessionStore.save(session)
@@ -298,10 +315,15 @@ class FieldReadingRepository(
         }
     val pendingReadingsFlow: Flow<List<PendingReadingEntity>> = dao.getAllPendingReadingsFlow()
     val pendingPaymentsFlow: Flow<List<PendingPaymentEntity>> = dao.getAllPendingPaymentsFlow()
-    fun getSubscriberFlow(id: String): Flow<SubscriberEntity?> = dao.getSubscriberByIdFlow(id)
+    fun getSubscriberFlow(id: String): Flow<SubscriberEntity?> =
+        combine(dao.getSubscriberByIdFlow(id), cacheVisibility) { value, visible ->
+            if (visible && currentCacheScope() == prefs.getString("subscriber_cache_scope", null))
+                value else null
+        }
 
     suspend fun saveReading(subscriberId: String, currentReading: Double, notes: String, latitude: Double, longitude: Double, photoPath: String?, isReadingReset: Boolean, cycleRange: com.example.data.CycleDateRange, fieldVerified: Boolean = true, readingValueText: String? = null): Result<Unit> {
         requireSubscriptionForOffline()
+        requireVerifiedCacheScope()
         val subscriber = dao.getSubscriberById(subscriberId) ?: return Result.failure(Exception("لم يتم العثور على بيانات هذا المشترك على الجهاز."))
         val normalizedReadingText = ReadingValuePrecision.normalizeForSync(currentReading, readingValueText)
             ?: return Result.failure(Exception("القراءة يجب أن تكون رقماً صحيحاً أو تحتوي على منزلة أو منزلتين عشريتين كحد أقصى."))
@@ -324,6 +346,7 @@ class FieldReadingRepository(
     }
 
     suspend fun savePayment(subscriberId: String, amount: Double, paymentMethod: String, notes: String): Boolean {
+        requireVerifiedCacheScope()
         if (amount <= 0) return false
         dao.insertPendingPayment(PendingPaymentEntity(subscriberId = subscriberId, amount = amount, paymentMethod = paymentMethod, notes = notes, status = "pending"))
         return true
@@ -359,6 +382,7 @@ class FieldReadingRepository(
 
     suspend fun syncAllData(onProgress: (Int, String) -> Unit): Result<SyncSummary> {
         requireSubscriptionForOffline()
+        requireVerifiedCacheScope()
         val outcome = runCatching {
             ensureActiveAccessToken()
             val branchId = activeBranchId()
