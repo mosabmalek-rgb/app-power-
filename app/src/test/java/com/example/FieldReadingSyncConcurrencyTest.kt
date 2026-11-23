@@ -449,6 +449,60 @@ class FieldReadingSyncConcurrencyTest {
         assertTrue(repository(fakeApi()).subscribersFlow.first().isEmpty())
     }
 
+    @Test fun legacyOnlyServerCompletesAtomicSnapshotAndPreservesOfflineOutbox() = runBlocking {
+        authenticate()
+        seedPendingReading()
+        db.dao().insertSubscribers(listOf(SubscriberEntity(
+            "50","S50","Previous snapshot","","","7",0.0,"",0.0
+        )))
+        legacyOnlyServer = true
+        val result = withTimeout(15000) { repository(fakeApi()).refreshSubscribers() }
+        assertTrue(result.exceptionOrNull()?.message.orEmpty(), result.isSuccess)
+        assertEquals(2, legacyCalls.get())
+        assertNull(db.dao().getSubscriberById("50"))
+        assertEquals("Legacy 1", db.dao().getSubscriberById("15")?.name)
+        assertEquals("Legacy 2", db.dao().getSubscriberById("16")?.name)
+        assertNull(db.dao().readDeltaState())
+        assertEquals(operationKey,
+            db.dao().getPendingReadingsWithStatus("pending").single().clientReferenceId)
+    }
+
+    @Test fun interruptedLegacyPageKeepsPublishedSnapshotAndDeltaCursor() = runBlocking {
+        authenticate()
+        seedPendingReading()
+        db.dao().commitDeltaPage(
+            "1:2:7", null, "bootstrap", "a".repeat(64), "cycle-1",
+            listOf(SubscriberEntity(
+                "50","S50","Previous snapshot","","","7",0.0,"",0.0
+            )), emptyList(), "existing-cursor", false
+        )
+        legacyOnlyServer = true
+        legacyBreakSecondPage = true
+        val result = withTimeout(15000) { repository(fakeApi()).refreshSubscribers() }
+        assertTrue(result.isFailure)
+        assertEquals("Previous snapshot", db.dao().getSubscriberById("50")?.name)
+        assertNull(db.dao().getSubscriberById("15"))
+        assertEquals("existing-cursor", db.dao().readDeltaState()?.cursor)
+        assertEquals(operationKey,
+            db.dao().getPendingReadingsWithStatus("pending").single().clientReferenceId)
+    }
+
+    @Test fun legacyDuplicateIdFailsWithoutPublishingPartialSnapshot() = runBlocking {
+        authenticate()
+        seedPendingReading()
+        db.dao().insertSubscribers(listOf(SubscriberEntity(
+            "50","S50","Existing","","","7",0.0,"",0.0
+        )))
+        legacyOnlyServer = true
+        legacyDuplicateId = true
+        val result = withTimeout(15000) { repository(fakeApi()).refreshSubscribers() }
+        assertTrue(result.isFailure)
+        assertEquals("Existing", db.dao().getSubscriberById("50")?.name)
+        assertNull(db.dao().getSubscriberById("15"))
+        assertEquals(operationKey,
+            db.dao().getPendingReadingsWithStatus("pending").single().clientReferenceId)
+    }
+
     @Test fun successfulProfileWithNoBranchesQuarantinesWithoutDeletingOutbox() = runBlocking {
         authenticate()
         seedPendingReading()
