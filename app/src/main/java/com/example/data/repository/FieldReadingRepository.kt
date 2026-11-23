@@ -11,6 +11,7 @@ import com.example.data.PendingPaymentEntity
 import com.example.data.PendingReadingEntity
 import com.example.data.PendingSyncEventEntity
 import com.example.data.ReadingCycleType
+import com.example.data.SubscriberCacheTrust
 import com.example.data.SubscriberDeltaCoordinator
 import com.example.data.SubscriberEntity
 import com.example.data.api.FieldReadingApi
@@ -55,6 +56,8 @@ class FieldReadingRepository(
         // Shared by UI and WorkManager repositories. Login and Delta commit must
         // not change the authenticated identity during each other's operation.
         val accountScopeMutex = Mutex()
+        // UI and WorkManager must not upload the same pending operation concurrently.
+        val uploadSyncMutex = Mutex()
     }
 
     private fun requireSubscriptionForOffline() { if (!sessionStore.subscriptionAllowsOfflineNow()) throw IllegalStateException("انتهت صلاحية اشتراك PowerHub. يلزم تجديد الاشتراك والاتصال بالإنترنت.") }
@@ -62,6 +65,7 @@ class FieldReadingRepository(
     private val remoteConfig = RemoteConfigRepository(context)
     private var api: FieldReadingApi = MobileApiClient.create(sessionStore, remoteConfig.activeApiUrl())
     private val prefs = context.getSharedPreferences("field_reading_prefs", Context.MODE_PRIVATE)
+    private val subscriberCacheTrust = SubscriberCacheTrust(prefs)
     private val profilePrefs = context.getSharedPreferences("field_profile_prefs", Context.MODE_PRIVATE)
     private val subscriberDelta = SubscriberDeltaCoordinator(dao) { api }
     private fun localScope(userId: Long, tenantId: Long, branchId: Long): String =
@@ -118,18 +122,21 @@ class FieldReadingRepository(
     }
 
     private val cacheVisibility = MutableStateFlow(
-        prefs.getString("subscriber_cache_scope", null) == currentCacheScope() &&
+        !subscriberCacheTrust.isQuarantined() &&
+            prefs.getString("subscriber_cache_scope", null) == currentCacheScope() &&
             currentCacheScope() != null
     )
     private fun refreshCacheVisibility() {
-        cacheVisibility.value = currentCacheScope()?.let {
-            it == prefs.getString("subscriber_cache_scope", null)
-        } == true
+        cacheVisibility.value = !subscriberCacheTrust.isQuarantined() &&
+            currentCacheScope()?.let {
+                it == prefs.getString("subscriber_cache_scope", null)
+            } == true
     }
 
     private fun requireVerifiedCacheScope() {
         val current = currentCacheScope()
-        check(current != null && current == prefs.getString("subscriber_cache_scope", null)) {
+        check(!subscriberCacheTrust.isQuarantined() &&
+            current != null && current == prefs.getString("subscriber_cache_scope", null)) {
             "Offline data is not bound to the authenticated account, tenant and branch"
         }
     }
@@ -456,18 +463,34 @@ class FieldReadingRepository(
                     "Local account or branch changed during Delta sync"
                 }
             },
-            onCacheInvalidated = { cacheVisibility.value = false }
+            onCacheInvalidated = {
+                cacheVisibility.value = false
+                subscriberCacheTrust.quarantine()
+            }
         )
-        // Only a fully verified refresh restores visibility after a revoked scope.
+        // A failed/partial bootstrap NEVER clears persistent permission quarantine.
+        subscriberCacheTrust.releaseAfterVerifiedRefresh()
         refreshCacheVisibility()
     }.onFailure { if (it is CancellationException) throw it } }
 
-    suspend fun syncAllData(onProgress: (Int, String) -> Unit): Result<SyncSummary> {
-        runCatching {
+    suspend fun syncAllData(onProgress: (Int, String) -> Unit): Result<SyncSummary> =
+        uploadSyncMutex.withLock {
+        val preflight = runCatching {
             requireSubscriptionForOffline()
             requireVerifiedCacheScope()
-        }.exceptionOrNull()?.let { return Result.failure(it) }
+        }.exceptionOrNull()
+        if (preflight != null) return@withLock Result.failure(preflight)
+        val originalScope = currentCacheScope()
+        val originalSession = currentMobileSessionKey()
+        check(originalScope != null && originalSession != null) {
+            "Authenticated sync scope is unavailable"
+        }
         val outcome = runCatching {
+            ensureActiveAccessToken()
+            check(currentCacheScope() == originalScope &&
+                currentMobileSessionKey() == originalSession) {
+                "Session changed before sync upload"
+            }
             ensureActiveAccessToken()
             val branchId = activeBranchId()
             if (branchId <= 0) throw IllegalStateException("حدّث قائمة المشتركين أولاً لتحديد الفرع المسموح.")
@@ -494,10 +517,20 @@ class FieldReadingRepository(
             readings.forEachIndexed { index, reading ->
                 onProgress(((index * 100) / readings.size).coerceAtLeast(5), "جارٍ إرسال قراءة ${index + 1} من ${readings.size}…")
                 try {
+                    requireVerifiedCacheScope()
+                    check(currentCacheScope() == originalScope &&
+                        currentMobileSessionKey() == originalSession) {
+                        "Authenticated scope changed before reading upload"
+                    }
                     dao.updateReadingSyncState(reading.localId, "syncing", reading.retryCount, null, System.currentTimeMillis())
                     val image = reading.photoPath?.let { loadImagePayload(it) ?: throw PermanentSyncException("تعذر العثور على صورة القراءة أو تجاوزت 5 ميغابايت.") }
                     val response = api.createReading(MobileReadingRequest(reading.clientReferenceId, branchId, reading.subscriberId.toLong(), ReadingValuePrecision.normalizeForSync(reading.currentReading, reading.readingValueText)
                         ?: throw PermanentSyncException("القراءة يجب أن تكون رقماً صحيحاً أو تحتوي على منزلة أو منزلتين عشريتين كحد أقصى."), localDateToUtc(reading.readingDate), if (image == null) "manual" else "photo", reading.isReadingReset, reading.fieldVerified, reading.latitude.takeIf { it != 0.0 }, reading.longitude.takeIf { it != 0.0 }, image?.first, image?.second, reading.notes.ifBlank { null }))
+                    requireVerifiedCacheScope()
+                    check(currentCacheScope() == originalScope &&
+                        currentMobileSessionKey() == originalSession) {
+                        "Authenticated scope changed during reading upload"
+                    }
                     if (response.id > 0) { dao.updateReadingSyncState(reading.localId, "synced", reading.retryCount, null, System.currentTimeMillis()); synced++ }
                     else {
                         val message = "رفض الخادم تأكيد القراءة؛ ستُعاد المحاولة تلقائياً."
@@ -542,7 +575,7 @@ class FieldReadingRepository(
         if (outcome.isFailure) {
             activeBranchId().takeIf { it > 0 }?.let { branchId -> queueSyncEvent(branchId, "sync_error", "retryable", SyncSummary(0, 0, 0), "SYNC_CYCLE_ERROR", outcome.exceptionOrNull()?.message) }
         }
-        return outcome
+        outcome
     }
 
     suspend fun requeueReadingForReview(localId: Int) = dao.requeueReadingForReview(localId)
