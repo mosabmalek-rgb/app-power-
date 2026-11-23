@@ -60,6 +60,7 @@ class FieldReadingSyncConcurrencyTest {
     private val seenUpload = CompletableDeferred<MobileReadingRequest>()
     private val heldAck = CompletableDeferred<MobileReadingResponse>()
     @Volatile private var replyImmediatelyAfterFirst = false
+    @Volatile private var failDelta = false
     private val postedKeys = java.util.Collections.synchronizedList(mutableListOf<String>())
 
     private fun authenticate() {
@@ -107,6 +108,7 @@ class FieldReadingSyncConcurrencyTest {
                 )
             )
             "getSubscribersDelta" -> {
+                if (failDelta) throw java.io.IOException("synthetic Delta outage")
                 val number = deltaCalls.incrementAndGet()
                 val bootstrap = args!![3] == "true"
                 MobileSubscriberDeltaResponse(
@@ -238,4 +240,48 @@ class FieldReadingSyncConcurrencyTest {
             db.dao().getPendingPaymentsWithStatus("pending").single().clientReferenceId)
         assertEquals(1, calls.get())
     }
+    @Test fun cancelledWorkerWaitingForUploadMutexDoesNotDuplicateReading() = runBlocking {
+        authenticate()
+        seedPendingReading()
+        val api = fakeApi()
+        val manualRepo = repository(api)
+        val workerRepo = repository(api)
+        val manual = async { manualRepo.syncAllData { _, _ -> } }
+        withTimeout(10000) { seenUpload.await() }
+        val waitingWorker = async(start = CoroutineStart.UNDISPATCHED) {
+            workerRepo.syncAllData { _, _ -> }
+        }
+        assertFalse(waitingWorker.isCompleted)
+        waitingWorker.cancelAndJoin()
+        assertTrue(waitingWorker.isCancelled)
+        assertEquals(1, calls.get())
+
+        heldAck.complete(MobileReadingResponse(100L, "accepted", null, false))
+        assertTrue(withTimeout(15000) { manual.await() }.isSuccess)
+        assertEquals(0, db.dao().anyReadingCount())
+        val nextWorker = withTimeout(15000) {
+            workerRepo.syncAllData { _, _ -> }
+        }
+        assertTrue(nextWorker.isSuccess)
+        assertEquals(1, calls.get())
+        assertEquals(listOf(operationKey), postedKeys.toList())
+    }
+
+    @Test fun deltaFailureNeverReportsCompleteOrDeletesAcknowledgedReading() = runBlocking {
+        authenticate()
+        seedPendingReading()
+        val repo = repository(fakeApi())
+        failDelta = true
+        val progress = mutableListOf<Int>()
+        val upload = async { repo.syncAllData { percent, _ -> progress.add(percent) } }
+        withTimeout(10000) { seenUpload.await() }
+        heldAck.complete(MobileReadingResponse(100L, "accepted", null, false))
+        val result = withTimeout(15000) { upload.await() }
+        assertTrue(result.isFailure)
+        assertFalse("no 100% before successful Delta", progress.contains(100))
+        val confirmed = db.dao().getPendingReadingsWithStatus("synced").single()
+        assertEquals(operationKey, confirmed.clientReferenceId)
+        assertEquals(1, calls.get())
+    }
+
 }
