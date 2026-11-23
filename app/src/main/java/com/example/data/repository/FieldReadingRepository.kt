@@ -366,7 +366,7 @@ class FieldReadingRepository(
             apply()
         }
         refreshCacheVisibility()
-    } }
+    }.onFailure { if (it is CancellationException) throw it } }
         }
 
     suspend fun changeTemporaryPassword(newPassword: String): Result<Unit> = runCatching {
@@ -564,6 +564,15 @@ class FieldReadingRepository(
                     }
                     throw cancelled
                 } catch (error: Exception) {
+                    // Authorization revocation is a whole-batch failure, not a
+                    // bad reading. Conceal cached tenant data, keep the original
+                    // in-flight operation/key and NEVER upload the next reading.
+                    if (error is HttpException &&
+                        OfflineSyncPolicy.mustAbortBatchAndQuarantine(error.code())) {
+                        cacheVisibility.value = false
+                        subscriberCacheTrust.quarantine()
+                        throw error
+                    }
                     // A changed account/session is not a per-reading network failure.
                     // Leave the original outbox untouched for recovery by its owner.
                     if (currentCacheScope() != originalScope ||
@@ -646,7 +655,18 @@ class FieldReadingRepository(
 
     private class PermanentSyncException(message: String) : IllegalStateException(message)
 
-    private suspend fun logoutRemote() { runCatching { if (sessionStore.isLoggedIn()) { ensureActiveAccessToken(); api.logout() } } }
+    private suspend fun logoutRemote() {
+        try {
+            if (sessionStore.isLoggedIn()) {
+                ensureActiveAccessToken()
+                api.logout()
+            }
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (_: Exception) {
+            // Offline logout still clears local credentials; never wipe the outbox.
+        }
+    }
 
     suspend fun logout() = uploadSyncMutex.withLock {
         // No authentication mutation is allowed while an upload is in flight.

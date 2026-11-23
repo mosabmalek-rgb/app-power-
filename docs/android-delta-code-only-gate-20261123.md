@@ -1,0 +1,31 @@
+# PowerHub Android Delta — offline auth revocation gate
+
+Scope: code-only CI, test fakes, in-memory Room. No hosted HTTP, device,
+Supabase writes, production deployment, real SMS or payment operations.
+
+## Revoked mobile authorization during batch upload
+When the reading upload server returns `401` or `403`:
+- The entire upload batch ends immediately; it is **not** treated as a
+  validation failure for an individual subscriber's reading.
+- Subscriber/payment/reading UI cache becomes invisible and its quarantine
+  is saved in app preferences, surviving repository recreation.
+- No subsequent pending reading is sent in the same batch.
+- The current reading's original row, `clientReferenceId` and existing
+  state are retained. A future authenticated session must verify scope.
+- Network `IOException`, `409` duplicate-in-cycle, `422` validation and
+  `5xx` remain outside this auth-revocation category.
+
+## Coroutine cancellation
+Login and remote logout propagate `CancellationException` rather than
+silently replacing task cancellation with a successful state change. Offline
+logout may still clear local credentials on ordinary I/O failure; it never
+deletes the Room outbox.
+
+## Tests and boundaries
+`OfflineSyncPolicyTest` asserts whole-batch revocation decisions and that
+other status codes do not trigger a cache quarantine. Robolectric tests for
+`SubscriberCacheTrust` assert the durable cache-denial flag. Existing Room
+tests cover preservation of pending operations and idempotency keys.
+
+This is code-gated only. Without real-device/network acceptance, **do not
+mark live delivery or release accepted**. PR #17 and PR #359 remain Draft.
