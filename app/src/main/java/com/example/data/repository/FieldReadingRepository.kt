@@ -321,8 +321,11 @@ class FieldReadingRepository(
         }
     }
 
+    // Lock order is ALWAYS uploadSync -> accountScope. A login cannot rotate
+    // credentials while a pending reading is in-flight or a Delta refresh runs.
     suspend fun login(email: String, password: String, remember: Boolean): Result<Unit> =
-        accountScopeMutex.withLock { runCatching {
+        uploadSyncMutex.withLock {
+            accountScopeMutex.withLock { runCatching {
         refreshApiBaseUrl()
         val session = try {
             api.login(MobileLoginRequest(email = email.trim().lowercase(), password = password, deviceLabel = "Android Field Reader"))
@@ -364,6 +367,7 @@ class FieldReadingRepository(
         }
         refreshCacheVisibility()
     } }
+        }
 
     suspend fun changeTemporaryPassword(newPassword: String): Result<Unit> = runCatching {
         ensureActiveAccessToken()
@@ -371,7 +375,7 @@ class FieldReadingRepository(
         prefs.edit().putBoolean("must_change_password", false).apply()
     }
 
-    fun clearSession() {
+    private fun clearSession() {
         sessionStore.clear()
         // Keep scope and offline work metadata for secure local reconciliation,
         // but do not reveal cached subscribers while logged out.
@@ -574,15 +578,19 @@ class FieldReadingRepository(
                 }
             }
             onProgress(100, "اكتمل إرسال القراءات: $synced ناجحة، $retryable ستُعاد تلقائياً، $needsReview تحتاج مراجعة.")
-            if (synced > 0) {
-                dao.clearSyncedReadings()
-            }
+            // Keep acknowledged local reading records until the full Delta download
+            // succeeds. An interrupted download must NOT prematurely clear evidence
+            // for the just-uploaded operations.
             // The download is part of this sync attempt. If it fails, return an
             // explicit retryable failure; do not falsely claim complete synchronization.
             // All posted readings remain idempotent by clientOperationId.
             refreshSubscribers().getOrThrow()
             val summary = SyncSummary(synced, retryable, needsReview)
             queueSyncEvent(branchId, "sync_cycle", when { needsReview > 0 -> "needs_review"; retryable > 0 -> "partial"; else -> "success" }, summary)
+            // Only the fully completed and authenticated upload + Delta cycle may
+            // compact acknowledged readings. Unsent/retryable/needs_review are never
+            // eligible for this query, and their clientReferenceId stays unchanged.
+            if (synced > 0) dao.clearSyncedReadings()
             summary
         }
         outcome.exceptionOrNull()?.let { if (it is CancellationException) throw it }
@@ -640,7 +648,14 @@ class FieldReadingRepository(
 
     private suspend fun logoutRemote() { runCatching { if (sessionStore.isLoggedIn()) { ensureActiveAccessToken(); api.logout() } } }
 
-    suspend fun logout() { logoutRemote(); clearSession() }
+    suspend fun logout() = uploadSyncMutex.withLock {
+        // No authentication mutation is allowed while an upload is in flight.
+        // Lock ordering matches login, avoiding deadlocks with Delta refresh.
+        accountScopeMutex.withLock {
+            logoutRemote()
+            clearSession()
+        }
+    }
 
     private fun classifySyncFailure(error: Exception) = when (error) {
         is PermanentSyncException -> com.example.data.OfflineSyncIssue("needs_review", error.message ?: "تحتاج القراءة إلى مراجعة الفني.")
