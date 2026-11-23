@@ -75,7 +75,7 @@ android {
         // Robolectric downloads Android runtime jars independently of Gradle.
         // Use Maven Central's canonical endpoint instead of repo1.maven.org
         // to avoid the class-wide MavenArtifactFetcher connection failures.
-        systemProperty("robolectric.dependency.repo.url", "https://repo.maven.apache.org/maven2")
+        it.systemProperty("robolectric.dependency.repo.url", "https://repo.maven.apache.org/maven2")
       }
     }
   }
