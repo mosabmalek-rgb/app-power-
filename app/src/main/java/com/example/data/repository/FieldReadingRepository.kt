@@ -56,6 +56,25 @@ class FieldReadingRepository(
     private fun localScope(userId: Long, tenantId: Long, branchId: Long): String =
         "$tenantId:$userId:$branchId"
 
+    /**
+     * A pre-v9 snapshot can be adopted only by the same still-authenticated
+     * user, tenant and branch; otherwise do not guess its original owner.
+     * The server verifies the access token on the following profile request.
+     */
+    private fun isSameLegacySession(userId: Long, tenantId: Long, branchId: Long): Boolean {
+        if (!sessionStore.isLoggedIn() ||
+            prefs.getLong("profile_user_id", -1L) != userId ||
+            prefs.getLong("active_branch_id", -1L) != branchId) return false
+        val payload = sessionStore.accessToken()?.split('.')?.getOrNull(1) ?: return false
+        val parsed = runCatching {
+            val bytes = android.util.Base64.decode(payload,
+                android.util.Base64.URL_SAFE or android.util.Base64.NO_WRAP or android.util.Base64.NO_PADDING)
+            JSONObject(String(bytes, Charsets.UTF_8))
+        }.getOrNull() ?: return false
+        return parsed.optString("sub").toLongOrNull() == userId &&
+            parsed.optLong("tenantId", -1L) == tenantId
+    }
+
     private fun currentCacheScope(): String? {
         val id = prefs.getLong("profile_user_id", -1)
         val tenant = prefs.getLong("profile_tenant_id", -1)
@@ -84,8 +103,16 @@ class FieldReadingRepository(
     private suspend fun bindSubscriberScope(scope: String) {
         val previous = prefs.getString("subscriber_cache_scope", null)
         if (previous == scope) return
-        // Pre-v9 subscriber rows have no authenticated provenance. Do not show them
-        // to another user/tenant; preserve all outbox/history on any blocked switch.
+        // Only adopt pre-v9 local rows when their existing signed-session identity
+        // agrees with the server-confirmed profile; never discard its outbox.
+        val components = scope.split(':').mapNotNull(String::toLongOrNull)
+        if (previous == null && components.size == 3 &&
+            isSameLegacySession(components[1], components[0], components[2])) {
+            check(prefs.edit().putString("subscriber_cache_scope", scope).commit())
+            refreshCacheVisibility()
+            return
+        }
+        // Unknown or changed identity: do not permit foreign offline work.
         dao.clearSubscriberCacheForIdentityChange()
         check(prefs.edit().putString("subscriber_cache_scope", scope).commit()) {
             "Cannot persist subscriber scope identity"
@@ -264,19 +291,19 @@ class FieldReadingRepository(
             session.user.branchIds.firstOrNull() ?: -1L
         )
         val previousScope = currentCacheScope()
-        // Unknown pre-v9 provenance cannot safely accompany a different login.
-        // No credential rotation happens until the offline outbox is verified.
         val pinnedScope = prefs.getString("subscriber_cache_scope", null)
-        if (pinnedScope == null) {
-            check(!dao.hasUnsentWork()) {
-                "There is unassigned offline work on this device; keep the original account and reconcile it before login."
-            }
-            check(dao.anyReadingCount() == 0 && dao.anyPaymentCount() == 0 &&
-                dao.anyEventCount() == 0) {
-                "Previous account's offline history needs reconciliation before login."
-            }
-        } else if (pinnedScope != newScope || previousScope != null && previousScope != newScope) {
+        val sameLegacy = pinnedScope == null && session.user.branchIds.firstOrNull() != null &&
+            isSameLegacySession(session.user.id, session.user.tenantId,
+                session.user.branchIds.first())
+        if (pinnedScope == null && !sameLegacy ||
+            pinnedScope != null && pinnedScope != newScope ||
+            previousScope != null && previousScope != newScope) {
+            // No token or cache identity changes until Room verifies that no
+            // unsent or historical work would be reassigned to another user.
             dao.clearSubscriberCacheForIdentityChange()
+        }
+        if (sameLegacy) {
+            check(prefs.edit().putString("subscriber_cache_scope", newScope).commit())
         }
         sessionStore.save(session)
         prefs.edit().apply {
