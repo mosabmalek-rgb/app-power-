@@ -14,6 +14,7 @@ import com.example.data.ReadingCycleType
 import com.example.data.SubscriberCacheTrust
 import com.example.data.SubscriberDeltaCoordinator
 import com.example.data.SubscriberEntity
+import com.example.data.asEntity
 import com.example.data.api.FieldReadingApi
 import com.example.data.api.MobileApiClient
 import com.example.data.api.MobileChangePasswordRequest
@@ -494,25 +495,65 @@ class FieldReadingRepository(
             .putLong("profile_tenant_id", profile.tenantId)
             .putLong("active_branch_id", branchId).apply()
         refreshCacheVisibility()
-        refreshReadingCycleConfiguration().getOrThrow()
-        subscriberDelta.refresh(
-            tenantId = profile.tenantId,
-            userId = profile.id,
-            branchId = branchId,
-            expectedScope = scope,
-            assertActiveScope = {
-                check(sessionStore.isLoggedIn() &&
-                    currentCacheScope() == scope &&
-                    currentMobileSessionKey() == authenticatedSessionKey &&
-                    prefs.getString("subscriber_cache_scope", null) == scope) {
-                    "Local account or branch changed during Delta sync"
-                }
-            },
-            onCacheInvalidated = {
-                cacheVisibility.value = false
-                subscriberCacheTrust.quarantine()
+        val currentCycle = refreshReadingCycleConfiguration().getOrThrow()
+        val assertScopedSession = {
+            check(sessionStore.isLoggedIn() &&
+                currentCacheScope() == scope &&
+                currentMobileSessionKey() == authenticatedSessionKey &&
+                prefs.getString("subscriber_cache_scope", null) == scope) {
+                "Local account or branch changed during subscriber sync"
             }
-        )
+        }
+        try {
+            subscriberDelta.refresh(
+                tenantId = profile.tenantId,
+                userId = profile.id,
+                branchId = branchId,
+                expectedScope = scope,
+                assertActiveScope = assertScopedSession,
+                onCacheInvalidated = {
+                    cacheVisibility.value = false
+                    subscriberCacheTrust.quarantine()
+                }
+            )
+        } catch (error: HttpException) {
+            // Until platform PR #359 is merged, main exposes the old paginated
+            // endpoint but not /subscribers/delta. Only its HTTP 404 enables
+            // compatibility; 401/403/409 and validation failures fail closed.
+            if (error.code() != 404) throw error
+            val cycleKey = requireNotNull(currentCycle.cycleKey) {
+                "Legacy subscriber snapshot is missing an authoritative cycle key"
+            }
+            val snapshot = mutableListOf<SubscriberEntity>()
+            val seenIds = mutableSetOf<String>()
+            val seenCursors = mutableSetOf<String>()
+            var cursor: String? = null
+            var pages = 0
+            do {
+                assertScopedSession()
+                check(++pages <= 10_000) { "Legacy subscriber pagination exceeded limit" }
+                val page = api.getSubscribers(branchId, 100, cursor)
+                assertScopedSession()
+                check(page.items.size <= 100 && page.items.all { it.id > 0 && it.branchId == branchId }) {
+                    "Legacy subscriber page contains invalid or foreign branch rows"
+                }
+                page.items.map { it.asEntity(cycleKey) }.forEach { row ->
+                    check(seenIds.add(row.id)) { "Legacy subscriber snapshot contains duplicate IDs" }
+                    snapshot += row
+                }
+                val next = page.nextCursor?.takeIf { it.isNotBlank() }
+                if (next != null) {
+                    check(next.length <= 2048 && seenCursors.add(next)) {
+                        "Legacy subscriber pagination cursor does not advance"
+                    }
+                }
+                cursor = next
+            } while (cursor != null)
+            // No clearing on partial downloads or scope changes. The entire
+            // legacy snapshot and Delta cursor reset share one Room transaction.
+            assertScopedSession()
+            dao.publishLegacySnapshot(snapshot)
+        }
         // A failed/partial bootstrap NEVER clears persistent permission quarantine.
         subscriberCacheTrust.releaseAfterVerifiedRefresh()
         refreshCacheVisibility()
