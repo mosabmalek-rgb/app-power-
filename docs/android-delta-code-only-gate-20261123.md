@@ -29,3 +29,20 @@ tests cover preservation of pending operations and idempotency keys.
 
 This is code-gated only. Without real-device/network acceptance, **do not
 mark live delivery or release accepted**. PR #17 and PR #359 remain Draft.
+
+## Local writes versus account rotation (follow-up code gate)
+The same process-wide `accountScopeMutex` now guards the *complete*
+scope-validation/Room-write operation for `saveReading`, `savePayment` and
+`requeueReadingForReview`. The check is performed after obtaining the lock:
+a writer waiting behind login/logout/Delta must not validate stale credentials
+and then write to a newly bound tenant's local outbox.
+
+`FieldReadingAccountWriteRaceTest` uses Robolectric and an in-memory Room
+database to hold the production mutex, revoke credentials while a payment or
+reading write is queued, and verify the queued operation is denied without
+modifying the original pending reading's `clientReferenceId`. These are
+deterministic code-side regression tests, not device or live HTTP tests.
+
+Acceptance: only mark this gate PASS after Android CI completes successfully
+for the *latest* branch HEAD. A successful run against an older commit
+does not establish acceptance for subsequent code changes.
