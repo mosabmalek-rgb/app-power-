@@ -11,6 +11,7 @@ import com.example.data.PendingPaymentEntity
 import com.example.data.PendingReadingEntity
 import com.example.data.PendingSyncEventEntity
 import com.example.data.ReadingCycleType
+import com.example.data.SubscriberDeltaCoordinator
 import com.example.data.SubscriberEntity
 import com.example.data.api.FieldReadingApi
 import com.example.data.api.MobileApiClient
@@ -21,6 +22,8 @@ import com.example.data.api.MobileSessionStore
 import com.example.data.api.MobileSyncEventRequest
 import com.example.data.api.RemoteConfigRepository
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.MutableStateFlow
 import retrofit2.HttpException
 import org.json.JSONObject
 import java.io.File
@@ -49,6 +52,39 @@ class FieldReadingRepository(
     private var api: FieldReadingApi = MobileApiClient.create(sessionStore, remoteConfig.activeApiUrl())
     private val prefs = context.getSharedPreferences("field_reading_prefs", Context.MODE_PRIVATE)
     private val profilePrefs = context.getSharedPreferences("field_profile_prefs", Context.MODE_PRIVATE)
+    private val subscriberDelta = SubscriberDeltaCoordinator(dao) { api }
+    private fun localScope(userId: Long, tenantId: Long, branchId: Long): String =
+        "$tenantId:$userId:$branchId"
+
+    private fun currentCacheScope(): String? {
+        val id = prefs.getLong("profile_user_id", -1)
+        val tenant = prefs.getLong("profile_tenant_id", -1)
+        val branch = prefs.getLong("active_branch_id", -1)
+        if (!sessionStore.isLoggedIn() || id <= 0 || tenant <= 0 || branch <= 0) return null
+        return localScope(id, tenant, branch)
+    }
+
+    private val cacheVisibility = MutableStateFlow(
+        prefs.getString("subscriber_cache_scope", null) == currentCacheScope() &&
+            currentCacheScope() != null
+    )
+    private fun refreshCacheVisibility() {
+        cacheVisibility.value = currentCacheScope()?.let {
+            it == prefs.getString("subscriber_cache_scope", null)
+        } == true
+    }
+
+    private suspend fun bindSubscriberScope(scope: String) {
+        val previous = prefs.getString("subscriber_cache_scope", null)
+        if (previous == scope) return
+        // Pre-v9 subscriber rows have no authenticated provenance. Do not show them
+        // to another user/tenant; preserve all outbox/history on any blocked switch.
+        dao.clearSubscriberCacheForIdentityChange()
+        check(prefs.edit().putString("subscriber_cache_scope", scope).commit()) {
+            "Cannot persist subscriber scope identity"
+        }
+        refreshCacheVisibility()
+    }
 
     private fun currentProfileUserId(): Long? {
         prefs.getLong("profile_user_id", -1L).takeIf { it > 0L }?.let { return it }
@@ -216,9 +252,19 @@ class FieldReadingRepository(
         } catch (e: IOException) {
             throw Exception("تعذر الاتصال بالخادم. يرجى التحقق من اتصال الإنترنت.")
         }
+        val newScope = localScope(
+            session.user.id, session.user.tenantId,
+            session.user.branchIds.firstOrNull() ?: -1L
+        )
+        val previousScope = currentCacheScope()
+        if (previousScope != null && previousScope != newScope ||
+            prefs.getString("subscriber_cache_scope", null)?.let { it != newScope } == true) {
+            dao.clearSubscriberCacheForIdentityChange()
+        }
         sessionStore.save(session)
         prefs.edit().apply {
             putString("user_name", session.user.name ?: email.substringBefore("@"))
+            putLong("profile_tenant_id", session.user.tenantId)
             putLong("profile_user_id", session.user.id)
             putString("user_role", session.user.role)
             putString("company_name", "PowerHub")
@@ -227,6 +273,7 @@ class FieldReadingRepository(
             if (remember) putString("saved_username", email.trim().lowercase()) else remove("saved_username")
             apply()
         }
+        refreshCacheVisibility()
     }
 
     suspend fun changeTemporaryPassword(newPassword: String): Result<Unit> = runCatching {
@@ -237,10 +284,18 @@ class FieldReadingRepository(
 
     fun clearSession() {
         sessionStore.clear()
-        prefs.edit().clear().apply()
+        // Keep scope and offline work metadata for secure local reconciliation,
+        // but do not reveal cached subscribers while logged out.
+        cacheVisibility.value = false
+        prefs.edit().remove("profile_user_id").remove("profile_tenant_id")
+            .remove("active_branch_id").apply()
     }
 
-    val subscribersFlow: Flow<List<SubscriberEntity>> = dao.getAllSubscribersFlow()
+    val subscribersFlow: Flow<List<SubscriberEntity>> =
+        combine(dao.getAllSubscribersFlow(), cacheVisibility) { rows, visible ->
+            if (visible && currentCacheScope() == prefs.getString("subscriber_cache_scope", null)) rows
+            else emptyList()
+        }
     val pendingReadingsFlow: Flow<List<PendingReadingEntity>> = dao.getAllPendingReadingsFlow()
     val pendingPaymentsFlow: Flow<List<PendingPaymentEntity>> = dao.getAllPendingPaymentsFlow()
     fun getSubscriberFlow(id: String): Flow<SubscriberEntity?> = dao.getSubscriberByIdFlow(id)
@@ -277,22 +332,29 @@ class FieldReadingRepository(
     suspend fun refreshSubscribers(): Result<Unit> = runCatching {
         ensureActiveAccessToken()
         val profile = api.getProfile().user
-        val branchId = activeBranchId().takeIf { it in profile.branchIds } ?: profile.branchIds.firstOrNull()
+        val branchId = activeBranchId().takeIf { it in profile.branchIds }
+            ?: profile.branchIds.firstOrNull()
             ?: throw IllegalStateException("لا توجد فروع ميدانية مسموحة لهذا الحساب.")
-        prefs.edit().putLong("active_branch_id", branchId).apply()
-        val cycleRange = refreshReadingCycleConfiguration().getOrThrow()
-        val allItems = buildList { var cursor: String? = null; do { val response = api.getSubscribers(branchId, 100, cursor); addAll(response.items); cursor = response.nextCursor } while (!cursor.isNullOrBlank()) }
-        dao.replaceSubscribersSnapshot(allItems.map { item ->
-            val cycleReading = item.currentCycleReading
-            SubscriberEntity(
-                id = item.id.toString(), refNumber = item.subscriberNo, name = item.fullName, phone = item.phone,
-                address = item.address ?: "", branchId = item.branchId.toString(),
-                lastReading = item.lastReading?.toDoubleOrNull() ?: 0.0, lastReadingDate = item.lastReadingAt ?: "", balance = 0.0,
-                hasReadingInCurrentCycle = item.hasReadingInCurrentCycle,
-                cycleReadingValue = cycleReading?.readingValue, cycleReadingAt = cycleReading?.readingAt,
-                cycleReadingStatus = cycleReading?.status, currentCycleKey = if (item.hasReadingInCurrentCycle) cycleRange.cycleKey else null
-            )
-        })
+        val scope = localScope(profile.id, profile.tenantId, branchId)
+        bindSubscriberScope(scope)
+        prefs.edit().putLong("profile_user_id", profile.id)
+            .putLong("profile_tenant_id", profile.tenantId)
+            .putLong("active_branch_id", branchId).apply()
+        refreshCacheVisibility()
+        refreshReadingCycleConfiguration().getOrThrow()
+        subscriberDelta.refresh(
+            tenantId = profile.tenantId,
+            userId = profile.id,
+            branchId = branchId,
+            expectedScope = scope,
+            assertActiveScope = {
+                check(sessionStore.isLoggedIn() &&
+                    currentCacheScope() == scope &&
+                    prefs.getString("subscriber_cache_scope", null) == scope) {
+                    "Local account or branch changed during Delta sync"
+                }
+            }
+        )
     }
 
     suspend fun syncAllData(onProgress: (Int, String) -> Unit): Result<SyncSummary> {
