@@ -148,7 +148,11 @@ class MobileSessionStore(context: Context) {
         true
     }
 
-    fun clear() = prefs.edit().clear().apply()
+    // Match login and authenticator rotation synchronization: logout must
+    // not race with a concurrent HTTP token update.
+    fun clear() = synchronized(mobileSessionRefreshLock) {
+        prefs.edit().clear().commit()
+    }
 }
 
 private class MobileSessionAuthenticator(
