@@ -276,7 +276,12 @@ class FieldReadingRepository(
         refreshApiBaseUrl()
         if (!sessionStore.needsAccessRefresh()) return
         val refreshToken = sessionStore.refreshToken() ?: throw IllegalStateException("انتهت جلسة الموبايل. سجّل الدخول مجدداً.")
-        sessionStore.save(api.refresh(com.example.data.api.MobileRefreshRequest(refreshToken)))
+        val response = api.refresh(com.example.data.api.MobileRefreshRequest(refreshToken))
+        // Do not let a delayed refresh resurrect a logged-out session, or
+        // replace tokens rotated by the HTTP authenticator or a newer login.
+        if (!sessionStore.saveRefreshResponseIfCurrent(refreshToken, response)) {
+            check(sessionStore.isLoggedIn()) { "Mobile session changed during token refresh" }
+        }
     }
 
     private suspend fun refreshApiBaseUrl() {
