@@ -24,6 +24,7 @@ import com.example.data.api.RemoteConfigRepository
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.MutableStateFlow
 import retrofit2.HttpException
@@ -103,6 +104,14 @@ class FieldReadingRepository(
         val tenant = prefs.getLong("profile_tenant_id", -1)
         val branch = prefs.getLong("active_branch_id", -1)
         if (!sessionStore.isLoggedIn() || id <= 0 || tenant <= 0 || branch <= 0) return null
+        // Unverified local preferences alone may never authorize viewing cached tenant data.
+        // The bearer payload is read only as local identity consistency evidence;
+        // server authorization is still enforced on the real HTTP calls.
+        val tokenIdentity = currentMobileSessionKey() ?: return null
+        val tokenParts = tokenIdentity.split(':')
+        if (tokenParts.size != 3 ||
+            tokenParts[0].toLongOrNull() != tenant ||
+            tokenParts[1].toLongOrNull() != id) return null
         return localScope(id, tenant, branch)
     }
 
@@ -367,8 +376,16 @@ class FieldReadingRepository(
             if (visible && currentCacheScope() == prefs.getString("subscriber_cache_scope", null)) rows
             else emptyList()
         }
-    val pendingReadingsFlow: Flow<List<PendingReadingEntity>> = dao.getAllPendingReadingsFlow()
-    val pendingPaymentsFlow: Flow<List<PendingPaymentEntity>> = dao.getAllPendingPaymentsFlow()
+    val pendingReadingsFlow: Flow<List<PendingReadingEntity>> =
+        combine(dao.getAllPendingReadingsFlow(), cacheVisibility) { rows, visible ->
+            if (visible && currentCacheScope() == prefs.getString("subscriber_cache_scope", null)) rows
+            else emptyList()
+        }
+    val pendingPaymentsFlow: Flow<List<PendingPaymentEntity>> =
+        combine(dao.getAllPendingPaymentsFlow(), cacheVisibility) { rows, visible ->
+            if (visible && currentCacheScope() == prefs.getString("subscriber_cache_scope", null)) rows
+            else emptyList()
+        }
     fun getSubscriberFlow(id: String): Flow<SubscriberEntity?> =
         combine(dao.getSubscriberByIdFlow(id), cacheVisibility) { value, visible ->
             if (visible && currentCacheScope() == prefs.getString("subscriber_cache_scope", null))
@@ -438,7 +455,7 @@ class FieldReadingRepository(
                 }
             }
         )
-    } }
+    }.onFailure { if (it is CancellationException) throw it } }
 
     suspend fun syncAllData(onProgress: (Int, String) -> Unit): Result<SyncSummary> {
         runCatching {
@@ -476,6 +493,9 @@ class FieldReadingRepository(
                         queueSyncEvent(branchId, "sync_error", "retryable", SyncSummary(0, 1, 0), "READING_SYNC_UNCONFIRMED", message)
                         retryable++
                     }
+                } catch (cancelled: CancellationException) {
+                    // Cancellation is control flow, not a retryable network failure.
+                    throw cancelled
                 } catch (error: Exception) {
                     val issue = classifySyncFailure(error)
                     dao.updateReadingSyncState(reading.localId, issue.status, reading.retryCount + 1, issue.message, System.currentTimeMillis())
@@ -497,6 +517,7 @@ class FieldReadingRepository(
             queueSyncEvent(branchId, "sync_cycle", when { needsReview > 0 -> "needs_review"; retryable > 0 -> "partial"; else -> "success" }, summary)
             summary
         }
+        outcome.exceptionOrNull()?.let { if (it is CancellationException) throw it }
         if (outcome.isFailure) {
             activeBranchId().takeIf { it > 0 }?.let { branchId -> queueSyncEvent(branchId, "sync_error", "retryable", SyncSummary(0, 0, 0), "SYNC_CYCLE_ERROR", outcome.exceptionOrNull()?.message) }
         }
