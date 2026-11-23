@@ -389,25 +389,30 @@ class FieldReadingRepository(
             .remove("active_branch_id").apply()
     }
 
+    private fun canShowCachedData(visible: Boolean): Boolean =
+        visible && !subscriberCacheTrust.isQuarantined() &&
+            currentCacheScope()?.let {
+                it == prefs.getString("subscriber_cache_scope", null)
+            } == true
+
+    // A different repository (Worker) can quarantine the cache without
+    // changing the UI repository's own StateFlow. The shared revision signals
+    // all active collectors to re-check the durable denial flag.
     val subscribersFlow: Flow<List<SubscriberEntity>> =
-        combine(dao.getAllSubscribersFlow(), cacheVisibility) { rows, visible ->
-            if (visible && currentCacheScope() == prefs.getString("subscriber_cache_scope", null)) rows
-            else emptyList()
+        combine(dao.getAllSubscribersFlow(), cacheVisibility, subscriberCacheTrust.changes) { rows, visible, _ ->
+            if (canShowCachedData(visible)) rows else emptyList()
         }
     val pendingReadingsFlow: Flow<List<PendingReadingEntity>> =
-        combine(dao.getAllPendingReadingsFlow(), cacheVisibility) { rows, visible ->
-            if (visible && currentCacheScope() == prefs.getString("subscriber_cache_scope", null)) rows
-            else emptyList()
+        combine(dao.getAllPendingReadingsFlow(), cacheVisibility, subscriberCacheTrust.changes) { rows, visible, _ ->
+            if (canShowCachedData(visible)) rows else emptyList()
         }
     val pendingPaymentsFlow: Flow<List<PendingPaymentEntity>> =
-        combine(dao.getAllPendingPaymentsFlow(), cacheVisibility) { rows, visible ->
-            if (visible && currentCacheScope() == prefs.getString("subscriber_cache_scope", null)) rows
-            else emptyList()
+        combine(dao.getAllPendingPaymentsFlow(), cacheVisibility, subscriberCacheTrust.changes) { rows, visible, _ ->
+            if (canShowCachedData(visible)) rows else emptyList()
         }
     fun getSubscriberFlow(id: String): Flow<SubscriberEntity?> =
-        combine(dao.getSubscriberByIdFlow(id), cacheVisibility) { value, visible ->
-            if (visible && currentCacheScope() == prefs.getString("subscriber_cache_scope", null))
-                value else null
+        combine(dao.getSubscriberByIdFlow(id), cacheVisibility, subscriberCacheTrust.changes) { value, visible, _ ->
+            if (canShowCachedData(visible)) value else null
         }
 
     // Coordinate ALL local outbox writes with login/logout and Delta scope changes.
