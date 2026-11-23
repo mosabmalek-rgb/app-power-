@@ -435,6 +435,9 @@ class FieldReadingRepository(
             flushPendingSyncEvents()
             val readings = dao.getPendingReadingsWithStatus("pending") + dao.getPendingReadingsWithStatus("retryable")
             if (readings.isEmpty()) {
+                // Subscription, branch and session are rechecked by refreshSubscribers().
+                // WorkManager must still poll for remote changes when no readings were created.
+                refreshSubscribers().getOrThrow()
                 val summary = SyncSummary(0, 0, 0)
                 queueSyncEvent(branchId, "sync_cycle", "success", summary)
                 return@runCatching summary
@@ -468,11 +471,11 @@ class FieldReadingRepository(
             onProgress(100, "اكتمل إرسال القراءات: $synced ناجحة، $retryable ستُعاد تلقائياً، $needsReview تحتاج مراجعة.")
             if (synced > 0) {
                 dao.clearSyncedReadings()
-                // Refresh the server-authoritative meter baseline after successful uploads.
-                // This keeps platform-entered readings and field-entered readings in sync
-                // without discarding any unsynced local work.
-                runCatching { refreshSubscribers() }
             }
+            // The download is part of this sync attempt. If it fails, return an
+            // explicit retryable failure; do not falsely claim complete synchronization.
+            // All posted readings remain idempotent by clientOperationId.
+            refreshSubscribers().getOrThrow()
             val summary = SyncSummary(synced, retryable, needsReview)
             queueSyncEvent(branchId, "sync_cycle", when { needsReview > 0 -> "needs_review"; retryable > 0 -> "partial"; else -> "success" }, summary)
             summary
