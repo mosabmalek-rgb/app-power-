@@ -589,7 +589,6 @@ class FieldReadingRepository(
                     if (issue.status == "needs_review") needsReview++ else retryable++
                 }
             }
-            onProgress(100, "اكتمل إرسال القراءات: $synced ناجحة، $retryable ستُعاد تلقائياً، $needsReview تحتاج مراجعة.")
             // Keep acknowledged local reading records until the full Delta download
             // succeeds. An interrupted download must NOT prematurely clear evidence
             // for the just-uploaded operations.
@@ -599,6 +598,9 @@ class FieldReadingRepository(
             refreshSubscribers().getOrThrow()
             val summary = SyncSummary(synced, retryable, needsReview)
             queueSyncEvent(branchId, "sync_cycle", when { needsReview > 0 -> "needs_review"; retryable > 0 -> "partial"; else -> "success" }, summary)
+            // Signal completion only AFTER the server-authoritative Delta download.
+            // A failed/cancelled Delta must never display a misleading 100% success.
+            onProgress(100, "اكتملت دورة المزامنة: $synced قراءة ناجحة، $retryable لإعادة المحاولة، $needsReview للمراجعة.")
             // Only the fully completed and authenticated upload + Delta cycle may
             // compact acknowledged readings. Unsent/retryable/needs_review are never
             // eligible for this query, and their clientReferenceId stays unchanged.
