@@ -50,6 +50,21 @@ interface FieldReadingDao {
     @Query("DELETE FROM subscribers WHERE id IN (:ids)")
     suspend fun deleteSubscriberIds(ids: List<String>)
 
+    @Query("SELECT COUNT(*) FROM pending_readings")
+    suspend fun anyReadingCount(): Int
+
+    @Query("SELECT COUNT(*) FROM pending_payments")
+    suspend fun anyPaymentCount(): Int
+
+    @Query("SELECT COUNT(*) FROM pending_sync_events")
+    suspend fun anyEventCount(): Int
+
+    @Query("SELECT COUNT(*) FROM subscribers")
+    suspend fun liveSubscriberCount(): Int
+
+    @Query("SELECT COUNT(*) FROM subscriber_delta_stage")
+    suspend fun stagedSubscriberCount(): Int
+
     @Query("SELECT COUNT(*) FROM pending_readings WHERE status <> 'synced'")
     suspend fun outstandingReadingCount(): Int
 
@@ -68,6 +83,9 @@ interface FieldReadingDao {
     @Transaction
     suspend fun clearSubscriberCacheForIdentityChange() {
         check(!hasUnsentWork()) { "Unsent offline work prevents account switch" }
+        check(anyReadingCount() == 0 && anyPaymentCount() == 0 && anyEventCount() == 0) {
+            "Offline work/history must be explicitly reconciled before account switch"
+        }
         clearAllSubscribers()
         clearDeltaStage()
         clearDeltaState()
@@ -104,6 +122,10 @@ interface FieldReadingDao {
         require(deletes.distinct().size == deletes.size)
         require(rows.none { row -> row.id in deletes })
         val previous = readDeltaState()
+        // Never allow a newly scoped bootstrap to reveal or overwrite a foreign snapshot.
+        if (previous != null && previous.scopeKey != scopeKey) {
+            error("Cannot apply page across tenant/user/branch scope")
+        }
         if (mode == "bootstrap") {
             if (requestCursor == null) {
                 // First page of a fresh bootstrap: the live snapshot is NOT cleared.
