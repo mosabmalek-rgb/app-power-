@@ -68,6 +68,9 @@ class FieldReadingSyncConcurrencyTest {
     @Volatile private var replyImmediatelyAfterFirst = false
     @Volatile private var failDelta = false
     @Volatile private var revokeDelta = false
+    @Volatile private var profileNoBranches = false
+    @Volatile private var profileForeignIdentity = false
+    @Volatile private var profileMovedBranch = false
     private val postedKeys = java.util.Collections.synchronizedList(mutableListOf<String>())
 
     private fun authenticate() {
@@ -106,7 +109,14 @@ class FieldReadingSyncConcurrencyTest {
                     MobileReadingResponse(100L, "accepted", null, true)
                 }
             }
-            "getProfile" -> MobileMeResponse(user)
+            "getProfile" -> MobileMeResponse(
+                when {
+                    profileForeignIdentity -> user.copy(tenantId = 99L)
+                    profileNoBranches -> user.copy(branchIds = emptyList())
+                    profileMovedBranch -> user.copy(branchIds = listOf(8L))
+                    else -> user
+                }
+            )
             "getReadingCycle" -> MobileReadingCycleResponse(
                 MobileReadingCycleConfigDto("MONTHLY", 1, 1, "Asia/Gaza"),
                 MobileReadingCycleBoundsDto(
@@ -369,6 +379,56 @@ class FieldReadingSyncConcurrencyTest {
         assertTrue(withTimeout(15000) { runningUpload.await() }.isSuccess)
         assertEquals("only uploader Delta reached API", 1, deltaCalls.get())
         assertEquals(1, calls.get())
+    }
+
+    @Test fun successfulProfileWithNoBranchesQuarantinesWithoutDeletingOutbox() = runBlocking {
+        authenticate()
+        seedPendingReading()
+        profileNoBranches = true
+        val repo = repository(fakeApi())
+        val outcome = withTimeout(15000) { repo.refreshSubscribers() }
+        assertTrue(outcome.isFailure)
+        assertTrue(SubscriberCacheTrust(prefs).isQuarantined())
+        assertTrue(repo.pendingReadingsFlow.first().isEmpty())
+        assertEquals(operationKey,
+            db.dao().getPendingReadingsWithStatus("pending").single().clientReferenceId)
+        assertEquals(0, deltaCalls.get())
+        assertTrue(repository(fakeApi()).subscribersFlow.first().isEmpty())
+    }
+
+    @Test fun foreignProfileIdentityIsDeniedBeforeCacheMutationOrDelta() = runBlocking {
+        authenticate()
+        seedPendingReading()
+        db.dao().insertSubscribers(listOf(SubscriberEntity(
+            id = "15", refNumber = "S15", name = "Keep local", phone = "",
+            address = "", branchId = "7", lastReading = 5.0, lastReadingDate = "",
+            balance = 0.0
+        )))
+        profileForeignIdentity = true
+        val repo = repository(fakeApi())
+        val outcome = withTimeout(15000) { repo.refreshSubscribers() }
+        assertTrue(outcome.isFailure)
+        assertTrue(SubscriberCacheTrust(prefs).isQuarantined())
+        assertEquals("1:2:7", prefs.getString("subscriber_cache_scope", null))
+        assertEquals("Keep local", db.dao().getSubscriberById("15")?.name)
+        assertEquals(operationKey,
+            db.dao().getPendingReadingsWithStatus("pending").single().clientReferenceId)
+        assertEquals(0, deltaCalls.get())
+    }
+
+    @Test fun branchRemovedAndReassignedFailsClosedWhileOfflineOutboxExists() = runBlocking {
+        authenticate()
+        seedPendingReading()
+        profileMovedBranch = true
+        val repo = repository(fakeApi())
+        val outcome = withTimeout(15000) { repo.refreshSubscribers() }
+        assertTrue(outcome.isFailure)
+        assertTrue(SubscriberCacheTrust(prefs).isQuarantined())
+        assertEquals("1:2:7", prefs.getString("subscriber_cache_scope", null))
+        assertEquals(7L, prefs.getLong("active_branch_id", -1))
+        assertEquals(operationKey,
+            db.dao().getPendingReadingsWithStatus("pending").single().clientReferenceId)
+        assertEquals(0, deltaCalls.get())
     }
 
 }
