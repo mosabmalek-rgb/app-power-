@@ -471,7 +471,15 @@ class FieldReadingRepository(
         // A failed/partial bootstrap NEVER clears persistent permission quarantine.
         subscriberCacheTrust.releaseAfterVerifiedRefresh()
         refreshCacheVisibility()
-    }.onFailure { if (it is CancellationException) throw it } }
+    }.onFailure {
+        if (it is HttpException && it.code() in setOf(401, 403)) {
+            // Authentication can be revoked before the Delta endpoint is reached
+            // (for example on the mobile profile or reading-cycle request).
+            cacheVisibility.value = false
+            subscriberCacheTrust.quarantine()
+        }
+        if (it is CancellationException) throw it
+    } }
 
     suspend fun syncAllData(onProgress: (Int, String) -> Unit): Result<SyncSummary> =
         uploadSyncMutex.withLock {
