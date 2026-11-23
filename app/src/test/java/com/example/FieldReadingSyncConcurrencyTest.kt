@@ -381,6 +381,51 @@ class FieldReadingSyncConcurrencyTest {
         assertEquals(1, calls.get())
     }
 
+    @Test fun workerQuarantineImmediatelyHidesAlreadyObservedUiFlows() = runBlocking {
+        authenticate()
+        seedPendingReading()
+        db.dao().insertSubscribers(listOf(SubscriberEntity(
+            id = "15", refNumber = "S15", name = "Cached subscriber",
+            phone = "", address = "", branchId = "7", lastReading = 5.0,
+            lastReadingDate = "", balance = 0.0
+        )))
+        db.dao().insertPendingPayment(PendingPaymentEntity(
+            subscriberId = "15", amount = 12.0, paymentMethod = "CASH",
+            notes = "", status = "pending", clientReferenceId = "payment-stable"
+        ))
+        val ui = repository(fakeApi())
+        val worker = repository(fakeApi())
+        assertEquals(1, withTimeout(10000) { ui.subscribersFlow.first { it.isNotEmpty() } }.size)
+        assertEquals(1, withTimeout(10000) { ui.pendingReadingsFlow.first { it.isNotEmpty() } }.size)
+        assertEquals(1, withTimeout(10000) { ui.pendingPaymentsFlow.first { it.isNotEmpty() } }.size)
+
+        // Start collecting *before* the worker denies the account. Independent
+        // UI cacheVisibility must not remain true after another repository's 403.
+        val hiddenSubscribers = async(start = CoroutineStart.UNDISPATCHED) {
+            ui.subscribersFlow.first { it.isEmpty() }
+        }
+        val hiddenReadings = async(start = CoroutineStart.UNDISPATCHED) {
+            ui.pendingReadingsFlow.first { it.isEmpty() }
+        }
+        val hiddenPayments = async(start = CoroutineStart.UNDISPATCHED) {
+            ui.pendingPaymentsFlow.first { it.isEmpty() }
+        }
+        revokeDelta = true
+        assertTrue(withTimeout(15000) { worker.refreshSubscribers() }.isFailure)
+        withTimeout(10000) {
+            hiddenSubscribers.await()
+            hiddenReadings.await()
+            hiddenPayments.await()
+        }
+        assertTrue(SubscriberCacheTrust(prefs).isQuarantined())
+        assertEquals("Cached subscriber", db.dao().getSubscriberById("15")?.name)
+        assertEquals(operationKey,
+            db.dao().getPendingReadingsWithStatus("pending").single().clientReferenceId)
+        assertEquals("payment-stable",
+            db.dao().getPendingPaymentsWithStatus("pending").single().clientReferenceId)
+        assertTrue(repository(fakeApi()).subscribersFlow.first().isEmpty())
+    }
+
     @Test fun successfulProfileWithNoBranchesQuarantinesWithoutDeletingOutbox() = runBlocking {
         authenticate()
         seedPendingReading()
