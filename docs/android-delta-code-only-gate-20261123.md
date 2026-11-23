@@ -65,3 +65,26 @@ legacy records, and retries using the production migration.
 This fixture checks legacy schema shape but is not an exported Room v8
 schema JSON or real user's database. Test success is bounded by that fixture.
 No destructive fallback migration or hosted database change is introduced.
+
+## UI versus WorkManager concurrent sync and cancellation
+`FieldReadingSyncConcurrencyTest` exercises the production repository
+with two instances sharing the real process-wide upload/account mutexes and
+an in-memory Room database. A fake suspend `FieldReadingApi` controls upload
+acknowledgements and synthetic Delta responses, without contacting a server.
+
+Scenarios now covered:
+- A UI upload and a WorkManager-equivalent upload overlap: only one HTTP
+  `createReading` is invoked for the original `clientReferenceId`.
+- Cancellation while a reading is in flight leaves the original idempotency
+  key intact and retryable; resending uses that same key.
+- Logout waits for the active upload and preserves unsent payments and
+  `needs_review` readings.
+- Cancelling a worker waiting behind `uploadSyncMutex` does not create a
+  second upload or block the following sync.
+- A synthetic Delta failure after a reading acknowledgement is a failed
+  cycle: the reading remains locally `synced` with its original key,
+  and the UI does not receive a misleading 100% completion callback.
+
+A successful fake HTTP round-trip verifies in-process sequencing only, not
+cross-process locking or live server-side idempotency. The actual post-change
+CI result on the latest commit remains the acceptance criterion.
