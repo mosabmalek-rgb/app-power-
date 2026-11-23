@@ -79,7 +79,9 @@ abstract class FieldReadingDatabase : RoomDatabase() {
             }
         }
 
-        private val MIGRATION_8_9 = object : Migration(8, 9) {
+        // Exposed to JVM/Robolectric migration regression tests. Production builder
+        // continues using this very same migration object.
+        internal val MIGRATION_8_9 = object : Migration(8, 9) {
             override fun migrate(db: SupportSQLiteDatabase) {
                 db.execSQL("CREATE TABLE IF NOT EXISTS subscriber_delta_state (id INTEGER NOT NULL PRIMARY KEY, scopeKey TEXT NOT NULL, cursor TEXT NOT NULL, phase TEXT NOT NULL, scopeVersion TEXT NOT NULL, cycleKey TEXT NOT NULL)")
                 db.execSQL("CREATE TABLE IF NOT EXISTS subscriber_delta_stage (id TEXT NOT NULL PRIMARY KEY, refNumber TEXT NOT NULL, name TEXT NOT NULL, phone TEXT NOT NULL, address TEXT NOT NULL, branchId TEXT NOT NULL, lastReading REAL NOT NULL, lastReadingDate TEXT NOT NULL, balance REAL NOT NULL, hasReadingInCurrentCycle INTEGER NOT NULL, cycleReadingValue TEXT, cycleReadingAt TEXT, cycleReadingStatus TEXT, currentCycleKey TEXT)")
