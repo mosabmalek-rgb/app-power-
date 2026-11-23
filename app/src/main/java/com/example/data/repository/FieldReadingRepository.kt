@@ -25,6 +25,8 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.MutableStateFlow
 import retrofit2.HttpException
@@ -453,8 +455,11 @@ class FieldReadingRepository(
                     prefs.getString("subscriber_cache_scope", null) == scope) {
                     "Local account or branch changed during Delta sync"
                 }
-            }
+            },
+            onCacheInvalidated = { cacheVisibility.value = false }
         )
+        // Only a fully verified refresh restores visibility after a revoked scope.
+        refreshCacheVisibility()
     }.onFailure { if (it is CancellationException) throw it } }
 
     suspend fun syncAllData(onProgress: (Int, String) -> Unit): Result<SyncSummary> {
@@ -467,7 +472,14 @@ class FieldReadingRepository(
             val branchId = activeBranchId()
             if (branchId <= 0) throw IllegalStateException("حدّث قائمة المشتركين أولاً لتحديد الفرع المسموح.")
             flushPendingSyncEvents()
-            val readings = dao.getPendingReadingsWithStatus("pending") + dao.getPendingReadingsWithStatus("retryable")
+            // A process can die after status becomes "syncing", before the server ack.
+            // Always replay with the SAME clientReferenceId: server idempotency resolves
+            // both accepted-but-unacknowledged and not-yet-accepted operations.
+            val readings = (
+                dao.getPendingReadingsWithStatus("pending") +
+                dao.getPendingReadingsWithStatus("retryable") +
+                dao.getPendingReadingsWithStatus("syncing")
+            ).distinctBy { it.localId }
             if (readings.isEmpty()) {
                 // Subscription, branch and session are rechecked by refreshSubscribers().
                 // WorkManager must still poll for remote changes when no readings were created.
@@ -494,7 +506,16 @@ class FieldReadingRepository(
                         retryable++
                     }
                 } catch (cancelled: CancellationException) {
-                    // Cancellation is control flow, not a retryable network failure.
+                    // Roll back the local in-flight status even in a cancelled coroutine.
+                    // On a process crash, the next cycle also accepts leftover "syncing".
+                    runCatching {
+                        withContext(NonCancellable) {
+                            dao.updateReadingSyncState(
+                                reading.localId, "retryable", reading.retryCount + 1,
+                                "توقفت المزامنة، ستتم إعادة المحاولة بأمان.", System.currentTimeMillis()
+                            )
+                        }
+                    }
                     throw cancelled
                 } catch (error: Exception) {
                     val issue = classifySyncFailure(error)

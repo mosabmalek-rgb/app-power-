@@ -83,8 +83,13 @@ class SubscriberDeltaCoordinatorTest {
         } as FieldReadingApi
     }
 
-    private suspend fun refresh(api: FieldReadingApi, guard: () -> Unit = {}) =
-        SubscriberDeltaCoordinator(dao) { api }.refresh(1L, 2L, 7L, scope, guard)
+    private suspend fun refresh(
+        api: FieldReadingApi,
+        guard: () -> Unit = {},
+        cacheInvalidated: () -> Unit = {}
+    ) = SubscriberDeltaCoordinator(dao) { api }.refresh(
+        1L, 2L, 7L, scope, guard, cacheInvalidated
+    )
 
     private fun httpError(code: Int, body: String) = HttpException(
         Response.error<Any>(code, body.toResponseBody("application/json".toMediaType()))
@@ -164,6 +169,50 @@ class SubscriberDeltaCoordinatorTest {
         assertTrue(runCatching { refresh(fake(page("delta", "cursor-new", cycle = "cycle-2"))) }.isFailure)
         assertEquals("cursor-old", dao.readDeltaState()?.cursor)
         assertNotNull(dao.getSubscriberById("9"))
+    }
+
+    @Test fun changedPermissionsHideCachedRowsBeforeSafeBootstrap() = runBlocking {
+        dao.commitDeltaPage(scope, null, "bootstrap", version, "cycle-1",
+            listOf(row("9")), emptyList(), "cursor-old", false)
+        var hidden = false
+        val mock = fake(
+            httpError(409, """{"requiresBootstrap":true,"error":{"code":"CURSOR_SCOPE_CHANGED"}}"""),
+            IOException("synthetic interruption while rebuilding authorized scope")
+        )
+        assertTrue(runCatching {
+            refresh(mock, cacheInvalidated = { hidden = true })
+        }.isFailure)
+        assertTrue("revoked cache must be concealed immediately", hidden)
+        assertNotNull(dao.getSubscriberById("9"))
+        assertEquals("cursor-old", dao.readDeltaState()?.cursor)
+    }
+
+    @Test fun forbiddenScopeMustHideCacheWithoutMutatingOutbox() = runBlocking {
+        dao.commitDeltaPage(scope, null, "bootstrap", version, "cycle-1",
+            listOf(row("9")), emptyList(), "cursor-old", false)
+        var hidden = false
+        assertTrue(runCatching {
+            refresh(fake(httpError(403, """{"error":{"code":"BRANCH_ACCESS_DENIED"}}""")),
+                cacheInvalidated = { hidden = true })
+        }.isFailure)
+        assertTrue(hidden)
+        assertNotNull(dao.getSubscriberById("9"))
+        assertEquals("cursor-old", dao.readDeltaState()?.cursor)
+    }
+
+    @Test fun secondExpiredCursorDoesNotLoopForeverOrErasePreviousSnapshot() = runBlocking {
+        dao.commitDeltaPage(scope, null, "bootstrap", version, "cycle-1",
+            listOf(row("9")), emptyList(), "cursor-old", false)
+        val expired = """{"requiresBootstrap":true,"error":{"code":"CURSOR_EXPIRED"}}"""
+        var invalidations = 0
+        assertTrue(runCatching {
+            refresh(fake(httpError(409, expired), httpError(409, expired)),
+                cacheInvalidated = { invalidations++ })
+        }.isFailure)
+        assertEquals(2, calls.size)
+        assertTrue(invalidations >= 1)
+        assertNotNull(dao.getSubscriberById("9"))
+        assertEquals("cursor-old", dao.readDeltaState()?.cursor)
     }
 
     @Test fun zeroChangeDeltaPreservesSnapshotAndAdvancesCursor() = runBlocking {

@@ -26,7 +26,8 @@ class SubscriberDeltaCoordinator(
         userId: Long,
         branchId: Long,
         expectedScope: String,
-        assertActiveScope: () -> Unit
+        assertActiveScope: () -> Unit,
+        onCacheInvalidated: () -> Unit = {}
     ) = syncLock.withLock {
         require(tenantId > 0 && userId > 0 && branchId > 0)
         val scope = "$tenantId:$userId:$branchId"
@@ -51,8 +52,12 @@ class SubscriberDeltaCoordinator(
                     bootstrap = if (bootstrap) "true" else null
                 )
             } catch (error: HttpException) {
+                // Rejected identity/permission or stale server scope must immediately
+                // conceal the previously published rows, even if re-bootstrap later fails.
+                if (error.code() == 401 || error.code() == 403) onCacheInvalidated()
                 val recoverable = parseBootstrapRequired(error)
                 if (!recoverable || retryBootstrap) throw error
+                onCacheInvalidated()
                 // Reset the locally staged snapshot and cursor on first NEW bootstrap page,
                 // not on a 409 response. Keep the published snapshot untouched until completion.
                 bootstrap = true

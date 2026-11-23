@@ -141,6 +141,23 @@ class SubscriberDeltaRoomTest {
         assertEquals(1, dao.outstandingReadingCount())
     }
 
+    @Test fun interruptedUploadStatusIsEligibleForIdempotentRetry() = runBlocking {
+        val operation = PendingReadingEntity(
+            subscriberId = "1", currentReading = 19.0, readingDate = "2026-11-01 12:00",
+            notes = "", latitude = 0.0, longitude = 0.0, photoPath = null, status = "pending",
+            clientReferenceId = "test-operation-keep-same-key"
+        )
+        val localId = dao.insertPendingReading(operation).toInt()
+        dao.updateReadingSyncState(localId, "syncing", 0, null, System.currentTimeMillis())
+        val queued = dao.getPendingReadingsWithStatus("syncing")
+        assertEquals(1, queued.size)
+        assertEquals("test-operation-keep-same-key", queued.single().clientReferenceId)
+        dao.updateReadingSyncState(localId, "retryable", 1, "synthetic cancellation", System.currentTimeMillis())
+        val retry = dao.getPendingReadingsWithStatus("retryable")
+        assertEquals(1, retry.size)
+        assertEquals(queued.single().clientReferenceId, retry.single().clientReferenceId)
+    }
+
     @Test fun failedStageReplacementKeepsPreviouslyPublishedSnapshot() = runBlocking {
         dao.commitDeltaPage(scope, null, "bootstrap", version, "cycle-1",
             listOf(row("1", "published")), emptyList(), "cursor-before", false)
