@@ -364,8 +364,10 @@ class FieldReadingRepository(
         }
 
     suspend fun saveReading(subscriberId: String, currentReading: Double, notes: String, latitude: Double, longitude: Double, photoPath: String?, isReadingReset: Boolean, cycleRange: com.example.data.CycleDateRange, fieldVerified: Boolean = true, readingValueText: String? = null): Result<Unit> {
-        requireSubscriptionForOffline()
-        requireVerifiedCacheScope()
+        runCatching {
+            requireSubscriptionForOffline()
+            requireVerifiedCacheScope()
+        }.exceptionOrNull()?.let { return Result.failure(it) }
         val subscriber = dao.getSubscriberById(subscriberId) ?: return Result.failure(Exception("لم يتم العثور على بيانات هذا المشترك على الجهاز."))
         val normalizedReadingText = ReadingValuePrecision.normalizeForSync(currentReading, readingValueText)
             ?: return Result.failure(Exception("القراءة يجب أن تكون رقماً صحيحاً أو تحتوي على منزلة أو منزلتين عشريتين كحد أقصى."))
@@ -388,7 +390,7 @@ class FieldReadingRepository(
     }
 
     suspend fun savePayment(subscriberId: String, amount: Double, paymentMethod: String, notes: String): Boolean {
-        requireVerifiedCacheScope()
+        if (runCatching { requireVerifiedCacheScope() }.isFailure) return false
         if (amount <= 0) return false
         dao.insertPendingPayment(PendingPaymentEntity(subscriberId = subscriberId, amount = amount, paymentMethod = paymentMethod, notes = notes, status = "pending"))
         return true
@@ -426,8 +428,10 @@ class FieldReadingRepository(
     }
 
     suspend fun syncAllData(onProgress: (Int, String) -> Unit): Result<SyncSummary> {
-        requireSubscriptionForOffline()
-        requireVerifiedCacheScope()
+        runCatching {
+            requireSubscriptionForOffline()
+            requireVerifiedCacheScope()
+        }.exceptionOrNull()?.let { return Result.failure(it) }
         val outcome = runCatching {
             ensureActiveAccessToken()
             val branchId = activeBranchId()
