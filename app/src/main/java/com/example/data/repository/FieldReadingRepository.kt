@@ -405,37 +405,40 @@ class FieldReadingRepository(
                 value else null
         }
 
-    suspend fun saveReading(subscriberId: String, currentReading: Double, notes: String, latitude: Double, longitude: Double, photoPath: String?, isReadingReset: Boolean, cycleRange: com.example.data.CycleDateRange, fieldVerified: Boolean = true, readingValueText: String? = null): Result<Unit> {
+    // Coordinate ALL local outbox writes with login/logout and Delta scope changes.
+    // Never authorize before waiting for the mutex: credentials can rotate while queued.
+    suspend fun saveReading(subscriberId: String, currentReading: Double, notes: String, latitude: Double, longitude: Double, photoPath: String?, isReadingReset: Boolean, cycleRange: com.example.data.CycleDateRange, fieldVerified: Boolean = true, readingValueText: String? = null): Result<Unit> = accountScopeMutex.withLock {
         runCatching {
             requireSubscriptionForOffline()
             requireVerifiedCacheScope()
-        }.exceptionOrNull()?.let { return Result.failure(it) }
-        val subscriber = dao.getSubscriberById(subscriberId) ?: return Result.failure(Exception("لم يتم العثور على بيانات هذا المشترك على الجهاز."))
+        }.exceptionOrNull()?.let { return@withLock Result.failure(it) }
+        val subscriber = dao.getSubscriberById(subscriberId) ?: return@withLock Result.failure(Exception("لم يتم العثور على بيانات هذا المشترك على الجهاز."))
         val normalizedReadingText = ReadingValuePrecision.normalizeForSync(currentReading, readingValueText)
-            ?: return Result.failure(Exception("القراءة يجب أن تكون رقماً صحيحاً أو تحتوي على منزلة أو منزلتين عشريتين كحد أقصى."))
-        if (!isReadingReset && currentReading < subscriber.lastReading) return Result.failure(Exception("القراءة الحالية يجب أن تكون أكبر من أو تساوي القراءة السابقة."))
+            ?: return@withLock Result.failure(Exception("القراءة يجب أن تكون رقماً صحيحاً أو تحتوي على منزلة أو منزلتين عشريتين كحد أقصى."))
+        if (!isReadingReset && currentReading < subscriber.lastReading) return@withLock Result.failure(Exception("القراءة الحالية يجب أن تكون أكبر من أو تساوي القراءة السابقة."))
         if (subscriber.hasReadingInCurrentCycle && subscriber.currentCycleKey == cycleRange.cycleKey) {
-            return Result.failure(Exception("تم تسجيل قراءة لهذا المشترك في دورة القراءة الحالية. حدّث القائمة ولا تسجل قراءة أخرى."))
+            return@withLock Result.failure(Exception("تم تسجيل قراءة لهذا المشترك في دورة القراءة الحالية. حدّث القائمة ولا تسجل قراءة أخرى."))
         }
         if (System.currentTimeMillis() !in cycleRange.startMillis..cycleRange.endMillis) {
-            return Result.failure(Exception("انتهت صلاحية نسخة دورة القراءة المحفوظة. اتصل بالإنترنت لتحديث الدورة قبل تسجيل القراءة."))
+            return@withLock Result.failure(Exception("انتهت صلاحية نسخة دورة القراءة المحفوظة. اتصل بالإنترنت لتحديث الدورة قبل تسجيل القراءة."))
         }
-        val cycleKey = cycleRange.cycleKey ?: return Result.failure(Exception("تعذر التحقق من هوية دورة القراءة الحالية. اتصل بالإنترنت وحدّث بيانات الدورة قبل تسجيل القراءة."))
+        val cycleKey = cycleRange.cycleKey ?: return@withLock Result.failure(Exception("تعذر التحقق من هوية دورة القراءة الحالية. اتصل بالإنترنت وحدّث بيانات الدورة قبل تسجيل القراءة."))
         val zone = TimeZone.getTimeZone(cycleRange.timeZoneId)
         val startText = SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.US).apply { timeZone = zone }.format(Date(cycleRange.startMillis))
         val endExclusiveText = SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.US).apply { timeZone = zone }.format(Date(cycleRange.endMillis + 1L))
         val reading = PendingReadingEntity(subscriberId = subscriberId, currentReading = currentReading, readingDate = currentDateTime(), notes = notes, latitude = latitude, longitude = longitude, photoPath = photoPath, status = "pending", isReadingReset = isReadingReset, fieldVerified = fieldVerified, readingValueText = normalizedReadingText, readingCycleKey = cycleKey)
         if (!dao.insertPendingReadingIfNoReadingInCycle(reading, cycleKey, startText, endExclusiveText)) {
-            return Result.failure(Exception("توجد قراءة محفوظة لهذا المشترك في دورة القراءة الحالية، محلية أو على الخادم."))
+            return@withLock Result.failure(Exception("توجد قراءة محفوظة لهذا المشترك في دورة القراءة الحالية، محلية أو على الخادم."))
         }
-        return Result.success(Unit)
+        return@withLock Result.success(Unit)
     }
 
-    suspend fun savePayment(subscriberId: String, amount: Double, paymentMethod: String, notes: String): Boolean {
-        if (runCatching { requireVerifiedCacheScope() }.isFailure) return false
-        if (amount <= 0) return false
+    // Payment intent must not be persisted under an identity that changed in flight.
+    suspend fun savePayment(subscriberId: String, amount: Double, paymentMethod: String, notes: String): Boolean = accountScopeMutex.withLock {
+        if (runCatching { requireVerifiedCacheScope() }.isFailure) return@withLock false
+        if (amount <= 0) return@withLock false
         dao.insertPendingPayment(PendingPaymentEntity(subscriberId = subscriberId, amount = amount, paymentMethod = paymentMethod, notes = notes, status = "pending"))
-        return true
+        true
     }
 
     suspend fun refreshSubscribers(): Result<Unit> =
@@ -626,7 +629,10 @@ class FieldReadingRepository(
         outcome
     }
 
-    suspend fun requeueReadingForReview(localId: Int) = dao.requeueReadingForReview(localId)
+    suspend fun requeueReadingForReview(localId: Int) = accountScopeMutex.withLock {
+        requireVerifiedCacheScope()
+        dao.requeueReadingForReview(localId)
+    }
 
     private suspend fun queueSyncEvent(branchId: Long, eventType: String, status: String, summary: SyncSummary, errorCode: String? = null, errorMessage: String? = null) {
         dao.insertPendingSyncEvent(PendingSyncEventEntity(branchId = branchId, eventType = eventType, status = status, syncedCount = summary.synced, retryableCount = summary.retryable, needsReviewCount = summary.needsReview, errorCode = errorCode, errorMessage = errorMessage?.take(1500)))
