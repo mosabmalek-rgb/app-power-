@@ -126,3 +126,42 @@ authenticator races and preservation of the local PIN. The additional
 `FieldReadingSyncConcurrencyTest` scenarios cover a 200 profile with zero
 branches, a foreign tenant, and reassignment to a different branch with
 unsent offline work. All use only synthetic local data.
+
+## Cross-repository cache quarantine and logout hardening (final code gate)
+An active UI repository must not keep showing stale subscriber, reading or
+payment flows if another repository instance (e.g. WorkManager) receives a
+403 or otherwise quarantines local data. The persistent
+`subscriber_cache_requires_validation` flag is the authority; a process-wide
+revision flow notifies *already active* collectors after every successful
+persisted quarantine/release. Each cache-backed UI flow rechecks the persisted
+flag, matching tenant/user/branch scope and local visibility before emission.
+The companion Robolectric regression starts collectors before a worker 403,
+then asserts all three flows go empty while the original offline reading and
+payment keys and subscriber records remain on disk. A newly created repository
+must continue to deny access.
+
+Mobile credential clearing is performed under the same refresh monitor as
+successful login, token rotation and revocation; it uses a committed change
+instead of asynchronously applying the clear. The original pending/outbox
+tables are untouched.
+
+## Combined code-only acceptance inventory (PR #17 / PR #359)
+- Android: `mosabmalek-rgb/app-power-` PR #17,
+  branch `feat/android-mobile-delta-atomic-sync`. Verify **latest HEAD** and
+  Android CI `Test and build debug APK` success *after* these final edits.
+- Platform: `mosabmalek-rgb/powerhub-platform` PR #359,
+  branch `feat/auth-local-first-single-pr`. At the last direct check, HEAD
+  `1e51ed52892e17a9fc6dd6776d35ef8b50f68f32` had six completed
+  successful PR workflows (PowerHub CI, Security, Admin Guard, Reading Cycle
+  PostgreSQL Integration, B5 Synthetic Financial Load and Docker Shadow).
+  These are historical checks, not a claim of a new platform deployment.
+- Local-only Android tests cover Room v8->v9 file migration and rollback,
+  bootstrap cursor/snapshot atomicity, idempotent Outbox recovery, UI vs
+  worker upload and Delta serialization, 401/403 cache quarantine, session
+  refresh/login/logout races, and multi-instance cache visibility.
+- No hosted HTTP, real device/emulator acceptance, live SMS/payment,
+  staging/production migration, release or merge was performed.
+- An Android CI green check only establishes the code-side gate. Both PRs
+  must remain Draft unless an explicit separate merge/release decision is made.
+  Cross-system server-side idempotency and real-network/device behavior remain
+  outside this acceptance scope.
