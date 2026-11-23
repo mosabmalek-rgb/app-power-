@@ -87,4 +87,69 @@ class SubscriberDeltaRoomTest {
         }
         assertEquals(1,dao.outstandingReadingCount())
     }
+    @Test fun interruptedBootstrapResumesWithoutExposingPartialRows() = runBlocking {
+        dao.insertSubscribers(listOf(row("90", "old-visible")))
+        dao.commitDeltaPage(scope, null, "bootstrap", version, "cycle-1",
+            listOf(row("1", "staged")), emptyList(), "cursor-one", true)
+
+        // A simulated process restart reads the same persisted stage and cursor.
+        val stateAfterRestart = dao.readDeltaState()
+        assertEquals("bootstrap", stateAfterRestart?.phase)
+        assertEquals("cursor-one", stateAfterRestart?.cursor)
+        assertNotNull(dao.getSubscriberById("90"))
+        assertNull(dao.getSubscriberById("1"))
+
+        dao.commitDeltaPage(scope, stateAfterRestart?.cursor, "bootstrap", version, "cycle-1",
+            listOf(row("2", "last")), emptyList(), "cursor-two", false)
+
+        assertNull(dao.getSubscriberById("90"))
+        assertNotNull(dao.getSubscriberById("1"))
+        assertNotNull(dao.getSubscriberById("2"))
+        assertEquals("delta", dao.readDeltaState()?.phase)
+    }
+
+    @Test fun invalidContinuationKeepsStagingAndCursorForRetry() = runBlocking {
+        dao.commitDeltaPage(scope, null, "bootstrap", version, "cycle-1",
+            listOf(row("1", "keep-staged")), emptyList(), "cursor-one", true)
+        assertThrows(IllegalStateException::class.java) {
+            runBlocking {
+                dao.commitDeltaPage(scope, "wrong-cursor", "bootstrap", version, "cycle-1",
+                    listOf(row("2", "invalid")), emptyList(), "cursor-two", false)
+            }
+        }
+        assertEquals(1, dao.stagedSubscriberCount())
+        assertEquals("cursor-one", dao.readDeltaState()?.cursor)
+        assertNull(dao.getSubscriberById("2"))
+    }
+
+    @Test fun foreignScopeCannotReplacePublishedRowsOrOutbox() = runBlocking {
+        dao.insertPendingReading(PendingReadingEntity(
+            subscriberId="1", currentReading=18.0, readingDate="2026-11-01 12:00",
+            notes="", latitude=0.0, longitude=0.0, photoPath=null, status="pending"
+        ))
+        dao.commitDeltaPage(scope, null, "bootstrap", version, "cycle-1",
+            listOf(row("1", "original")), emptyList(), "cursor-1", false)
+        assertThrows(IllegalStateException::class.java) {
+            runBlocking {
+                dao.commitDeltaPage("2:3:7", null, "bootstrap", version, "cycle-1",
+                    listOf(row("4", "foreign")), emptyList(), "cursor-2", false)
+            }
+        }
+        assertNotNull(dao.getSubscriberById("1"))
+        assertNull(dao.getSubscriberById("4"))
+        assertEquals("cursor-1", dao.readDeltaState()?.cursor)
+        assertEquals(1, dao.outstandingReadingCount())
+    }
+
+    @Test fun failedStageReplacementKeepsPreviouslyPublishedSnapshot() = runBlocking {
+        dao.commitDeltaPage(scope, null, "bootstrap", version, "cycle-1",
+            listOf(row("1", "published")), emptyList(), "cursor-before", false)
+        dao.commitDeltaPage(scope, null, "bootstrap", version, "cycle-2",
+            listOf(row("2", "staged")), emptyList(), "cursor-after-page-one", true)
+        assertNotNull(dao.getSubscriberById("1"))
+        assertNull(dao.getSubscriberById("2"))
+        assertEquals(1, dao.stagedSubscriberCount())
+        assertEquals("cursor-after-page-one", dao.readDeltaState()?.cursor)
+    }
+
 }
