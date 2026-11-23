@@ -11,7 +11,10 @@ import com.example.data.PendingPaymentEntity
 import com.example.data.PendingReadingEntity
 import com.example.data.PendingSyncEventEntity
 import com.example.data.ReadingCycleType
+import com.example.data.SubscriberCacheTrust
+import com.example.data.SubscriberDeltaCoordinator
 import com.example.data.SubscriberEntity
+import com.example.data.asEntity
 import com.example.data.api.FieldReadingApi
 import com.example.data.api.MobileApiClient
 import com.example.data.api.MobileChangePasswordRequest
@@ -21,6 +24,13 @@ import com.example.data.api.MobileSessionStore
 import com.example.data.api.MobileSyncEventRequest
 import com.example.data.api.RemoteConfigRepository
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.MutableStateFlow
 import retrofit2.HttpException
 import org.json.JSONObject
 import java.io.File
@@ -43,12 +53,117 @@ class FieldReadingRepository(
     private val dao: FieldReadingDao,
     private val sessionStore: MobileSessionStore = MobileSessionStore(context)
 ) {
+    private companion object {
+        // Shared by UI and WorkManager repositories. Login and Delta commit must
+        // not change the authenticated identity during each other's operation.
+        val accountScopeMutex = Mutex()
+        // UI and WorkManager must not upload the same pending operation concurrently.
+        val uploadSyncMutex = Mutex()
+    }
+
     private fun requireSubscriptionForOffline() { if (!sessionStore.subscriptionAllowsOfflineNow()) throw IllegalStateException("انتهت صلاحية اشتراك PowerHub. يلزم تجديد الاشتراك والاتصال بالإنترنت.") }
 
     private val remoteConfig = RemoteConfigRepository(context)
     private var api: FieldReadingApi = MobileApiClient.create(sessionStore, remoteConfig.activeApiUrl())
     private val prefs = context.getSharedPreferences("field_reading_prefs", Context.MODE_PRIVATE)
+    private val subscriberCacheTrust = SubscriberCacheTrust(prefs)
     private val profilePrefs = context.getSharedPreferences("field_profile_prefs", Context.MODE_PRIVATE)
+    private val subscriberDelta = SubscriberDeltaCoordinator(dao) { api }
+    private fun localScope(userId: Long, tenantId: Long, branchId: Long): String =
+        "$tenantId:$userId:$branchId"
+
+    /**
+     * A pre-v9 snapshot can be adopted only by the same still-authenticated
+     * user, tenant and branch; otherwise do not guess its original owner.
+     * The server verifies the access token on the following profile request.
+     */
+    private fun currentMobileSessionKey(): String? {
+        val access = sessionStore.accessToken() ?: return null
+        val encoded = access.split('.').getOrNull(1) ?: return null
+        val decoded = runCatching {
+            val bytes = android.util.Base64.decode(encoded,
+                android.util.Base64.URL_SAFE or android.util.Base64.NO_WRAP or android.util.Base64.NO_PADDING)
+            JSONObject(String(bytes, Charsets.UTF_8))
+        }.getOrNull() ?: return null
+        val tenant = decoded.optLong("tenantId", -1L)
+        val session = decoded.optLong("sessionId", -1L)
+        val user = decoded.optString("sub").toLongOrNull() ?: -1L
+        if (tenant <= 0 || session <= 0 || user <= 0) return null
+        return "$tenant:$user:$session"
+    }
+
+    private fun isSameLegacySession(userId: Long, tenantId: Long, branchId: Long): Boolean {
+        if (!sessionStore.isLoggedIn() ||
+            prefs.getLong("profile_user_id", -1L) != userId ||
+            prefs.getLong("active_branch_id", -1L) != branchId) return false
+        val payload = sessionStore.accessToken()?.split('.')?.getOrNull(1) ?: return false
+        val parsed = runCatching {
+            val bytes = android.util.Base64.decode(payload,
+                android.util.Base64.URL_SAFE or android.util.Base64.NO_WRAP or android.util.Base64.NO_PADDING)
+            JSONObject(String(bytes, Charsets.UTF_8))
+        }.getOrNull() ?: return false
+        return parsed.optString("sub").toLongOrNull() == userId &&
+            parsed.optLong("tenantId", -1L) == tenantId
+    }
+
+    private fun currentCacheScope(): String? {
+        val id = prefs.getLong("profile_user_id", -1)
+        val tenant = prefs.getLong("profile_tenant_id", -1)
+        val branch = prefs.getLong("active_branch_id", -1)
+        if (!sessionStore.isLoggedIn() || id <= 0 || tenant <= 0 || branch <= 0) return null
+        // Unverified local preferences alone may never authorize viewing cached tenant data.
+        // The bearer payload is read only as local identity consistency evidence;
+        // server authorization is still enforced on the real HTTP calls.
+        val tokenIdentity = currentMobileSessionKey() ?: return null
+        val tokenParts = tokenIdentity.split(':')
+        if (tokenParts.size != 3 ||
+            tokenParts[0].toLongOrNull() != tenant ||
+            tokenParts[1].toLongOrNull() != id) return null
+        return localScope(id, tenant, branch)
+    }
+
+    private val cacheVisibility = MutableStateFlow(
+        !subscriberCacheTrust.isQuarantined() &&
+            prefs.getString("subscriber_cache_scope", null) == currentCacheScope() &&
+            currentCacheScope() != null
+    )
+    private fun refreshCacheVisibility() {
+        cacheVisibility.value = !subscriberCacheTrust.isQuarantined() &&
+            currentCacheScope()?.let {
+                it == prefs.getString("subscriber_cache_scope", null)
+            } == true
+    }
+
+    private fun requireVerifiedCacheScope() {
+        val current = currentCacheScope()
+        check(!subscriberCacheTrust.isQuarantined() &&
+            current != null && current == prefs.getString("subscriber_cache_scope", null)) {
+            "Offline data is not bound to the authenticated account, tenant and branch"
+        }
+    }
+
+    private suspend fun bindSubscriberScope(scope: String) {
+        val previous = prefs.getString("subscriber_cache_scope", null)
+        if (previous == scope) return
+        // Never display rows from the old scope while a new account or branch
+        // is being verified and its cache is being cleared.
+        cacheVisibility.value = false
+        // Only adopt pre-v9 local rows when their existing signed-session identity
+        // agrees with the server-confirmed profile; never discard its outbox.
+        val components = scope.split(':').mapNotNull(String::toLongOrNull)
+        if (previous == null && components.size == 3 &&
+            isSameLegacySession(components[1], components[0], components[2])) {
+            check(prefs.edit().putString("subscriber_cache_scope", scope).commit())
+            refreshCacheVisibility()
+            return
+        }
+        // Unknown or changed identity: do not permit foreign offline work.
+        dao.clearSubscriberCacheForIdentityChange()
+        check(prefs.edit().putString("subscriber_cache_scope", scope).commit()) {
+            "Cannot persist subscriber scope identity"
+        }
+        refreshCacheVisibility()
+    }
 
     private fun currentProfileUserId(): Long? {
         prefs.getLong("profile_user_id", -1L).takeIf { it > 0L }?.let { return it }
@@ -162,7 +277,12 @@ class FieldReadingRepository(
         refreshApiBaseUrl()
         if (!sessionStore.needsAccessRefresh()) return
         val refreshToken = sessionStore.refreshToken() ?: throw IllegalStateException("انتهت جلسة الموبايل. سجّل الدخول مجدداً.")
-        sessionStore.save(api.refresh(com.example.data.api.MobileRefreshRequest(refreshToken)))
+        val response = api.refresh(com.example.data.api.MobileRefreshRequest(refreshToken))
+        // Do not let a delayed refresh resurrect a logged-out session, or
+        // replace tokens rotated by the HTTP authenticator or a newer login.
+        if (!sessionStore.saveRefreshResponseIfCurrent(refreshToken, response)) {
+            check(sessionStore.isLoggedIn()) { "Mobile session changed during token refresh" }
+        }
     }
 
     private suspend fun refreshApiBaseUrl() {
@@ -207,7 +327,11 @@ class FieldReadingRepository(
         }
     }
 
-    suspend fun login(email: String, password: String, remember: Boolean): Result<Unit> = runCatching {
+    // Lock order is ALWAYS uploadSync -> accountScope. A login cannot rotate
+    // credentials while a pending reading is in-flight or a Delta refresh runs.
+    suspend fun login(email: String, password: String, remember: Boolean): Result<Unit> =
+        uploadSyncMutex.withLock {
+            accountScopeMutex.withLock { runCatching {
         refreshApiBaseUrl()
         val session = try {
             api.login(MobileLoginRequest(email = email.trim().lowercase(), password = password, deviceLabel = "Android Field Reader"))
@@ -216,9 +340,29 @@ class FieldReadingRepository(
         } catch (e: IOException) {
             throw Exception("تعذر الاتصال بالخادم. يرجى التحقق من اتصال الإنترنت.")
         }
+        val newScope = localScope(
+            session.user.id, session.user.tenantId,
+            session.user.branchIds.firstOrNull() ?: -1L
+        )
+        val previousScope = currentCacheScope()
+        val pinnedScope = prefs.getString("subscriber_cache_scope", null)
+        val sameLegacy = pinnedScope == null && session.user.branchIds.firstOrNull() != null &&
+            isSameLegacySession(session.user.id, session.user.tenantId,
+                session.user.branchIds.first())
+        if (pinnedScope == null && !sameLegacy ||
+            pinnedScope != null && pinnedScope != newScope ||
+            previousScope != null && previousScope != newScope) {
+            // No token or cache identity changes until Room verifies that no
+            // unsent or historical work would be reassigned to another user.
+            dao.clearSubscriberCacheForIdentityChange()
+        }
+        if (sameLegacy) {
+            check(prefs.edit().putString("subscriber_cache_scope", newScope).commit())
+        }
         sessionStore.save(session)
         prefs.edit().apply {
             putString("user_name", session.user.name ?: email.substringBefore("@"))
+            putLong("profile_tenant_id", session.user.tenantId)
             putLong("profile_user_id", session.user.id)
             putString("user_role", session.user.role)
             putString("company_name", "PowerHub")
@@ -227,7 +371,9 @@ class FieldReadingRepository(
             if (remember) putString("saved_username", email.trim().lowercase()) else remove("saved_username")
             apply()
         }
-    }
+        refreshCacheVisibility()
+    }.onFailure { if (it is CancellationException) throw it } }
+        }
 
     suspend fun changeTemporaryPassword(newPassword: String): Result<Unit> = runCatching {
         ensureActiveAccessToken()
@@ -235,75 +381,227 @@ class FieldReadingRepository(
         prefs.edit().putBoolean("must_change_password", false).apply()
     }
 
-    fun clearSession() {
+    private fun clearSession() {
         sessionStore.clear()
-        prefs.edit().clear().apply()
+        // Keep scope and offline work metadata for secure local reconciliation,
+        // but do not reveal cached subscribers while logged out.
+        cacheVisibility.value = false
+        prefs.edit().remove("profile_user_id").remove("profile_tenant_id")
+            .remove("active_branch_id").apply()
     }
 
-    val subscribersFlow: Flow<List<SubscriberEntity>> = dao.getAllSubscribersFlow()
-    val pendingReadingsFlow: Flow<List<PendingReadingEntity>> = dao.getAllPendingReadingsFlow()
-    val pendingPaymentsFlow: Flow<List<PendingPaymentEntity>> = dao.getAllPendingPaymentsFlow()
-    fun getSubscriberFlow(id: String): Flow<SubscriberEntity?> = dao.getSubscriberByIdFlow(id)
+    private fun canShowCachedData(visible: Boolean): Boolean =
+        visible && !subscriberCacheTrust.isQuarantined() &&
+            currentCacheScope()?.let {
+                it == prefs.getString("subscriber_cache_scope", null)
+            } == true
 
-    suspend fun saveReading(subscriberId: String, currentReading: Double, notes: String, latitude: Double, longitude: Double, photoPath: String?, isReadingReset: Boolean, cycleRange: com.example.data.CycleDateRange, fieldVerified: Boolean = true, readingValueText: String? = null): Result<Unit> {
-        requireSubscriptionForOffline()
-        val subscriber = dao.getSubscriberById(subscriberId) ?: return Result.failure(Exception("لم يتم العثور على بيانات هذا المشترك على الجهاز."))
+    // A different repository (Worker) can quarantine the cache without
+    // changing the UI repository's own StateFlow. The shared revision signals
+    // all active collectors to re-check the durable denial flag.
+    val subscribersFlow: Flow<List<SubscriberEntity>> =
+        combine(dao.getAllSubscribersFlow(), cacheVisibility, subscriberCacheTrust.changes) { rows, visible, _ ->
+            if (canShowCachedData(visible)) rows else emptyList()
+        }
+    val pendingReadingsFlow: Flow<List<PendingReadingEntity>> =
+        combine(dao.getAllPendingReadingsFlow(), cacheVisibility, subscriberCacheTrust.changes) { rows, visible, _ ->
+            if (canShowCachedData(visible)) rows else emptyList()
+        }
+    val pendingPaymentsFlow: Flow<List<PendingPaymentEntity>> =
+        combine(dao.getAllPendingPaymentsFlow(), cacheVisibility, subscriberCacheTrust.changes) { rows, visible, _ ->
+            if (canShowCachedData(visible)) rows else emptyList()
+        }
+    fun getSubscriberFlow(id: String): Flow<SubscriberEntity?> =
+        combine(dao.getSubscriberByIdFlow(id), cacheVisibility, subscriberCacheTrust.changes) { value, visible, _ ->
+            if (canShowCachedData(visible)) value else null
+        }
+
+    // Coordinate ALL local outbox writes with login/logout and Delta scope changes.
+    // Never authorize before waiting for the mutex: credentials can rotate while queued.
+    suspend fun saveReading(subscriberId: String, currentReading: Double, notes: String, latitude: Double, longitude: Double, photoPath: String?, isReadingReset: Boolean, cycleRange: com.example.data.CycleDateRange, fieldVerified: Boolean = true, readingValueText: String? = null): Result<Unit> = accountScopeMutex.withLock {
+        runCatching {
+            requireSubscriptionForOffline()
+            requireVerifiedCacheScope()
+        }.exceptionOrNull()?.let { return@withLock Result.failure(it) }
+        val subscriber = dao.getSubscriberById(subscriberId) ?: return@withLock Result.failure(Exception("لم يتم العثور على بيانات هذا المشترك على الجهاز."))
         val normalizedReadingText = ReadingValuePrecision.normalizeForSync(currentReading, readingValueText)
-            ?: return Result.failure(Exception("القراءة يجب أن تكون رقماً صحيحاً أو تحتوي على منزلة أو منزلتين عشريتين كحد أقصى."))
-        if (!isReadingReset && currentReading < subscriber.lastReading) return Result.failure(Exception("القراءة الحالية يجب أن تكون أكبر من أو تساوي القراءة السابقة."))
+            ?: return@withLock Result.failure(Exception("القراءة يجب أن تكون رقماً صحيحاً أو تحتوي على منزلة أو منزلتين عشريتين كحد أقصى."))
+        if (!isReadingReset && currentReading < subscriber.lastReading) return@withLock Result.failure(Exception("القراءة الحالية يجب أن تكون أكبر من أو تساوي القراءة السابقة."))
         if (subscriber.hasReadingInCurrentCycle && subscriber.currentCycleKey == cycleRange.cycleKey) {
-            return Result.failure(Exception("تم تسجيل قراءة لهذا المشترك في دورة القراءة الحالية. حدّث القائمة ولا تسجل قراءة أخرى."))
+            return@withLock Result.failure(Exception("تم تسجيل قراءة لهذا المشترك في دورة القراءة الحالية. حدّث القائمة ولا تسجل قراءة أخرى."))
         }
         if (System.currentTimeMillis() !in cycleRange.startMillis..cycleRange.endMillis) {
-            return Result.failure(Exception("انتهت صلاحية نسخة دورة القراءة المحفوظة. اتصل بالإنترنت لتحديث الدورة قبل تسجيل القراءة."))
+            return@withLock Result.failure(Exception("انتهت صلاحية نسخة دورة القراءة المحفوظة. اتصل بالإنترنت لتحديث الدورة قبل تسجيل القراءة."))
         }
-        val cycleKey = cycleRange.cycleKey ?: return Result.failure(Exception("تعذر التحقق من هوية دورة القراءة الحالية. اتصل بالإنترنت وحدّث بيانات الدورة قبل تسجيل القراءة."))
+        val cycleKey = cycleRange.cycleKey ?: return@withLock Result.failure(Exception("تعذر التحقق من هوية دورة القراءة الحالية. اتصل بالإنترنت وحدّث بيانات الدورة قبل تسجيل القراءة."))
         val zone = TimeZone.getTimeZone(cycleRange.timeZoneId)
         val startText = SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.US).apply { timeZone = zone }.format(Date(cycleRange.startMillis))
         val endExclusiveText = SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.US).apply { timeZone = zone }.format(Date(cycleRange.endMillis + 1L))
         val reading = PendingReadingEntity(subscriberId = subscriberId, currentReading = currentReading, readingDate = currentDateTime(), notes = notes, latitude = latitude, longitude = longitude, photoPath = photoPath, status = "pending", isReadingReset = isReadingReset, fieldVerified = fieldVerified, readingValueText = normalizedReadingText, readingCycleKey = cycleKey)
         if (!dao.insertPendingReadingIfNoReadingInCycle(reading, cycleKey, startText, endExclusiveText)) {
-            return Result.failure(Exception("توجد قراءة محفوظة لهذا المشترك في دورة القراءة الحالية، محلية أو على الخادم."))
+            return@withLock Result.failure(Exception("توجد قراءة محفوظة لهذا المشترك في دورة القراءة الحالية، محلية أو على الخادم."))
         }
-        return Result.success(Unit)
+        return@withLock Result.success(Unit)
     }
 
-    suspend fun savePayment(subscriberId: String, amount: Double, paymentMethod: String, notes: String): Boolean {
-        if (amount <= 0) return false
+    // Payment intent must not be persisted under an identity that changed in flight.
+    suspend fun savePayment(subscriberId: String, amount: Double, paymentMethod: String, notes: String): Boolean = accountScopeMutex.withLock {
+        if (runCatching { requireVerifiedCacheScope() }.isFailure) return@withLock false
+        if (amount <= 0) return@withLock false
         dao.insertPendingPayment(PendingPaymentEntity(subscriberId = subscriberId, amount = amount, paymentMethod = paymentMethod, notes = notes, status = "pending"))
-        return true
+        true
     }
 
-    suspend fun refreshSubscribers(): Result<Unit> = runCatching {
+    // Public/manual refresh shares the upload gate with WorkManager. Otherwise a
+    // concurrent branch/permission change can publish Delta during an HTTP upload.
+    // Lock order stays uploadSyncMutex -> accountScopeMutex (login/logout too).
+    suspend fun refreshSubscribers(): Result<Unit> =
+        uploadSyncMutex.withLock { refreshSubscribersWithinUploadLock() }
+
+    // Called only by a holder of uploadSyncMutex; never reacquire that mutex.
+    private suspend fun refreshSubscribersWithinUploadLock(): Result<Unit> =
+        accountScopeMutex.withLock { runCatching {
         ensureActiveAccessToken()
         val profile = api.getProfile().user
-        val branchId = activeBranchId().takeIf { it in profile.branchIds } ?: profile.branchIds.firstOrNull()
-            ?: throw IllegalStateException("لا توجد فروع ميدانية مسموحة لهذا الحساب.")
-        prefs.edit().putLong("active_branch_id", branchId).apply()
-        val cycleRange = refreshReadingCycleConfiguration().getOrThrow()
-        val allItems = buildList { var cursor: String? = null; do { val response = api.getSubscribers(branchId, 100, cursor); addAll(response.items); cursor = response.nextCursor } while (!cursor.isNullOrBlank()) }
-        dao.replaceSubscribersSnapshot(allItems.map { item ->
-            val cycleReading = item.currentCycleReading
-            SubscriberEntity(
-                id = item.id.toString(), refNumber = item.subscriberNo, name = item.fullName, phone = item.phone,
-                address = item.address ?: "", branchId = item.branchId.toString(),
-                lastReading = item.lastReading?.toDoubleOrNull() ?: 0.0, lastReadingDate = item.lastReadingAt ?: "", balance = 0.0,
-                hasReadingInCurrentCycle = item.hasReadingInCurrentCycle,
-                cycleReadingValue = cycleReading?.readingValue, cycleReadingAt = cycleReading?.readingAt,
-                cycleReadingStatus = cycleReading?.status, currentCycleKey = if (item.hasReadingInCurrentCycle) cycleRange.cycleKey else null
+        val authenticatedSessionKey = currentMobileSessionKey()
+        val sessionParts = authenticatedSessionKey?.split(':')
+        // Do not accept even a 200 profile for another tenant/user. Verify BEFORE
+        // clearing or binding Room, so forged/stale profile data cannot migrate the cache.
+        if (sessionParts?.size != 3 ||
+            sessionParts[0].toLongOrNull() != profile.tenantId ||
+            sessionParts[1].toLongOrNull() != profile.id) {
+            cacheVisibility.value = false
+            subscriberCacheTrust.quarantine()
+            error("Server profile does not match the current mobile session")
+        }
+        val selectedBranch = activeBranchId()
+        if (selectedBranch > 0 && selectedBranch !in profile.branchIds) {
+            // A 200 response can remove a branch without returning HTTP 403.
+            // Persist the denial before attempting to rebind: pending offline
+            // work can block a branch change and must never be deleted.
+            cacheVisibility.value = false
+            subscriberCacheTrust.quarantine()
+        }
+        val branchId = selectedBranch.takeIf { it in profile.branchIds }
+            ?: profile.branchIds.firstOrNull()
+            ?: run {
+                cacheVisibility.value = false
+                subscriberCacheTrust.quarantine()
+                error("No authorized mobile branches remain for this account")
+            }
+        val scope = localScope(profile.id, profile.tenantId, branchId)
+        bindSubscriberScope(scope)
+        prefs.edit().putLong("profile_user_id", profile.id)
+            .putLong("profile_tenant_id", profile.tenantId)
+            .putLong("active_branch_id", branchId).apply()
+        refreshCacheVisibility()
+        val currentCycle = refreshReadingCycleConfiguration().getOrThrow()
+        val assertScopedSession = {
+            check(sessionStore.isLoggedIn() &&
+                currentCacheScope() == scope &&
+                currentMobileSessionKey() == authenticatedSessionKey &&
+                prefs.getString("subscriber_cache_scope", null) == scope) {
+                "Local account or branch changed during subscriber sync"
+            }
+        }
+        try {
+            subscriberDelta.refresh(
+                tenantId = profile.tenantId,
+                userId = profile.id,
+                branchId = branchId,
+                expectedScope = scope,
+                assertActiveScope = assertScopedSession,
+                onCacheInvalidated = {
+                    cacheVisibility.value = false
+                    subscriberCacheTrust.quarantine()
+                }
             )
-        })
-    }
+        } catch (error: HttpException) {
+            // Until platform PR #359 is merged, main exposes the old paginated
+            // endpoint but not /subscribers/delta. Only its HTTP 404 enables
+            // compatibility; 401/403/409 and validation failures fail closed.
+            if (error.code() != 404) throw error
+            val cycleKey = requireNotNull(currentCycle.cycleKey) {
+                "Legacy subscriber snapshot is missing an authoritative cycle key"
+            }
+            val snapshot = mutableListOf<SubscriberEntity>()
+            val seenIds = mutableSetOf<String>()
+            val seenCursors = mutableSetOf<String>()
+            var cursor: String? = null
+            var pages = 0
+            do {
+                assertScopedSession()
+                check(++pages <= 10_000) { "Legacy subscriber pagination exceeded limit" }
+                val page = api.getSubscribers(branchId, 100, cursor)
+                assertScopedSession()
+                check(page.items.size <= 100 && page.items.all { it.id > 0 && it.branchId == branchId }) {
+                    "Legacy subscriber page contains invalid or foreign branch rows"
+                }
+                page.items.map { it.asEntity(cycleKey) }.forEach { row ->
+                    check(seenIds.add(row.id)) { "Legacy subscriber snapshot contains duplicate IDs" }
+                    snapshot += row
+                }
+                val next = page.nextCursor?.takeIf { it.isNotBlank() }
+                if (next != null) {
+                    check(next.length <= 2048 && seenCursors.add(next)) {
+                        "Legacy subscriber pagination cursor does not advance"
+                    }
+                }
+                cursor = next
+            } while (cursor != null)
+            // No clearing on partial downloads or scope changes. The entire
+            // legacy snapshot and Delta cursor reset share one Room transaction.
+            assertScopedSession()
+            dao.publishLegacySnapshot(snapshot)
+        }
+        // A failed/partial bootstrap NEVER clears persistent permission quarantine.
+        subscriberCacheTrust.releaseAfterVerifiedRefresh()
+        refreshCacheVisibility()
+    }.onFailure {
+        if (it is HttpException && it.code() in setOf(401, 403)) {
+            // Authentication can be revoked before the Delta endpoint is reached
+            // (for example on the mobile profile or reading-cycle request).
+            cacheVisibility.value = false
+            subscriberCacheTrust.quarantine()
+        }
+        if (it is CancellationException) throw it
+    } }
 
-    suspend fun syncAllData(onProgress: (Int, String) -> Unit): Result<SyncSummary> {
-        requireSubscriptionForOffline()
+    suspend fun syncAllData(onProgress: (Int, String) -> Unit): Result<SyncSummary> =
+        uploadSyncMutex.withLock {
+        val preflight = runCatching {
+            requireSubscriptionForOffline()
+            requireVerifiedCacheScope()
+        }.exceptionOrNull()
+        if (preflight != null) return@withLock Result.failure(preflight)
+        val originalScope = currentCacheScope()
+        val originalSession = currentMobileSessionKey()
+        if (originalScope == null || originalSession == null) {
+            return@withLock Result.failure(
+                IllegalStateException("Authenticated sync scope is unavailable")
+            )
+        }
         val outcome = runCatching {
             ensureActiveAccessToken()
+            check(currentCacheScope() == originalScope &&
+                currentMobileSessionKey() == originalSession) {
+                "Session changed before sync upload"
+            }
             val branchId = activeBranchId()
             if (branchId <= 0) throw IllegalStateException("حدّث قائمة المشتركين أولاً لتحديد الفرع المسموح.")
             flushPendingSyncEvents()
-            val readings = dao.getPendingReadingsWithStatus("pending") + dao.getPendingReadingsWithStatus("retryable")
+            // A process can die after status becomes "syncing", before the server ack.
+            // Always replay with the SAME clientReferenceId: server idempotency resolves
+            // both accepted-but-unacknowledged and not-yet-accepted operations.
+            val readings = (
+                dao.getPendingReadingsWithStatus("pending") +
+                dao.getPendingReadingsWithStatus("retryable") +
+                dao.getPendingReadingsWithStatus("syncing")
+            ).distinctBy { it.localId }
             if (readings.isEmpty()) {
+                // Subscription, branch and session are rechecked by refreshSubscribers().
+                // WorkManager must still poll for remote changes when no readings were created.
+                refreshSubscribersWithinUploadLock().getOrThrow()
                 val summary = SyncSummary(0, 0, 0)
                 queueSyncEvent(branchId, "sync_cycle", "success", summary)
                 return@runCatching summary
@@ -314,10 +612,20 @@ class FieldReadingRepository(
             readings.forEachIndexed { index, reading ->
                 onProgress(((index * 100) / readings.size).coerceAtLeast(5), "جارٍ إرسال قراءة ${index + 1} من ${readings.size}…")
                 try {
+                    requireVerifiedCacheScope()
+                    check(currentCacheScope() == originalScope &&
+                        currentMobileSessionKey() == originalSession) {
+                        "Authenticated scope changed before reading upload"
+                    }
                     dao.updateReadingSyncState(reading.localId, "syncing", reading.retryCount, null, System.currentTimeMillis())
                     val image = reading.photoPath?.let { loadImagePayload(it) ?: throw PermanentSyncException("تعذر العثور على صورة القراءة أو تجاوزت 5 ميغابايت.") }
                     val response = api.createReading(MobileReadingRequest(reading.clientReferenceId, branchId, reading.subscriberId.toLong(), ReadingValuePrecision.normalizeForSync(reading.currentReading, reading.readingValueText)
                         ?: throw PermanentSyncException("القراءة يجب أن تكون رقماً صحيحاً أو تحتوي على منزلة أو منزلتين عشريتين كحد أقصى."), localDateToUtc(reading.readingDate), if (image == null) "manual" else "photo", reading.isReadingReset, reading.fieldVerified, reading.latitude.takeIf { it != 0.0 }, reading.longitude.takeIf { it != 0.0 }, image?.first, image?.second, reading.notes.ifBlank { null }))
+                    requireVerifiedCacheScope()
+                    check(currentCacheScope() == originalScope &&
+                        currentMobileSessionKey() == originalSession) {
+                        "Authenticated scope changed during reading upload"
+                    }
                     if (response.id > 0) { dao.updateReadingSyncState(reading.localId, "synced", reading.retryCount, null, System.currentTimeMillis()); synced++ }
                     else {
                         val message = "رفض الخادم تأكيد القراءة؛ ستُعاد المحاولة تلقائياً."
@@ -325,7 +633,33 @@ class FieldReadingRepository(
                         queueSyncEvent(branchId, "sync_error", "retryable", SyncSummary(0, 1, 0), "READING_SYNC_UNCONFIRMED", message)
                         retryable++
                     }
+                } catch (cancelled: CancellationException) {
+                    // Roll back the local in-flight status even in a cancelled coroutine.
+                    // On a process crash, the next cycle also accepts leftover "syncing".
+                    runCatching {
+                        withContext(NonCancellable) {
+                            dao.updateReadingSyncState(
+                                reading.localId, "retryable", reading.retryCount + 1,
+                                "توقفت المزامنة، ستتم إعادة المحاولة بأمان.", System.currentTimeMillis()
+                            )
+                        }
+                    }
+                    throw cancelled
                 } catch (error: Exception) {
+                    // Authorization revocation is a whole-batch failure, not a
+                    // bad reading. Conceal cached tenant data, keep the original
+                    // in-flight operation/key and NEVER upload the next reading.
+                    if (error is HttpException &&
+                        OfflineSyncPolicy.mustAbortBatchAndQuarantine(error.code())) {
+                        cacheVisibility.value = false
+                        subscriberCacheTrust.quarantine()
+                        throw error
+                    }
+                    // A changed account/session is not a per-reading network failure.
+                    // Leave the original outbox untouched for recovery by its owner.
+                    if (currentCacheScope() != originalScope ||
+                        currentMobileSessionKey() != originalSession ||
+                        subscriberCacheTrust.isQuarantined()) throw error
                     val issue = classifySyncFailure(error)
                     dao.updateReadingSyncState(reading.localId, issue.status, reading.retryCount + 1, issue.message, System.currentTimeMillis())
                     val diagnosticCode = issue.errorCode
@@ -334,25 +668,49 @@ class FieldReadingRepository(
                     if (issue.status == "needs_review") needsReview++ else retryable++
                 }
             }
-            onProgress(100, "اكتمل إرسال القراءات: $synced ناجحة، $retryable ستُعاد تلقائياً، $needsReview تحتاج مراجعة.")
-            if (synced > 0) {
-                dao.clearSyncedReadings()
-                // Refresh the server-authoritative meter baseline after successful uploads.
-                // This keeps platform-entered readings and field-entered readings in sync
-                // without discarding any unsynced local work.
-                runCatching { refreshSubscribers() }
-            }
+            // Keep acknowledged local reading records until the full Delta download
+            // succeeds. An interrupted download must NOT prematurely clear evidence
+            // for the just-uploaded operations.
+            // The download is part of this sync attempt. If it fails, return an
+            // explicit retryable failure; do not falsely claim complete synchronization.
+            // All posted readings remain idempotent by clientOperationId.
+            refreshSubscribersWithinUploadLock().getOrThrow()
             val summary = SyncSummary(synced, retryable, needsReview)
             queueSyncEvent(branchId, "sync_cycle", when { needsReview > 0 -> "needs_review"; retryable > 0 -> "partial"; else -> "success" }, summary)
+            // Compact only after verified Delta and persisted sync event. Do not
+            // announce 100% if the final local cleanup fails.
+            if (synced > 0) dao.clearSyncedReadings()
+            onProgress(100, "اكتملت دورة المزامنة: $synced قراءة ناجحة، $retryable لإعادة المحاولة، $needsReview للمراجعة.")
             summary
         }
-        if (outcome.isFailure) {
-            activeBranchId().takeIf { it > 0 }?.let { branchId -> queueSyncEvent(branchId, "sync_error", "retryable", SyncSummary(0, 0, 0), "SYNC_CYCLE_ERROR", outcome.exceptionOrNull()?.message) }
+        outcome.exceptionOrNull()?.let { failure ->
+            if (failure is CancellationException) throw failure
+            // Authentication may also be rejected before the first reading upload
+            // by token refresh or sync-event delivery. Persist cache quarantine
+            // regardless of which step raised the 401/403.
+            if (failure is HttpException &&
+                OfflineSyncPolicy.mustAbortBatchAndQuarantine(failure.code())) {
+                cacheVisibility.value = false
+                subscriberCacheTrust.quarantine()
+            }
         }
-        return outcome
+        if (outcome.isFailure &&
+            currentCacheScope() == originalScope &&
+            currentMobileSessionKey() == originalSession &&
+            !subscriberCacheTrust.isQuarantined()) {
+            activeBranchId().takeIf { it > 0 }?.let { branchId ->
+                queueSyncEvent(branchId, "sync_error", "retryable",
+                    SyncSummary(0, 0, 0), "SYNC_CYCLE_ERROR",
+                    outcome.exceptionOrNull()?.message)
+            }
+        }
+        outcome
     }
 
-    suspend fun requeueReadingForReview(localId: Int) = dao.requeueReadingForReview(localId)
+    suspend fun requeueReadingForReview(localId: Int) = accountScopeMutex.withLock {
+        requireVerifiedCacheScope()
+        dao.requeueReadingForReview(localId)
+    }
 
     private suspend fun queueSyncEvent(branchId: Long, eventType: String, status: String, summary: SyncSummary, errorCode: String? = null, errorMessage: String? = null) {
         dao.insertPendingSyncEvent(PendingSyncEventEntity(branchId = branchId, eventType = eventType, status = status, syncedCount = summary.synced, retryableCount = summary.retryable, needsReviewCount = summary.needsReview, errorCode = errorCode, errorMessage = errorMessage?.take(1500)))
@@ -391,9 +749,27 @@ class FieldReadingRepository(
 
     private class PermanentSyncException(message: String) : IllegalStateException(message)
 
-    private suspend fun logoutRemote() { runCatching { if (sessionStore.isLoggedIn()) { ensureActiveAccessToken(); api.logout() } } }
+    private suspend fun logoutRemote() {
+        try {
+            if (sessionStore.isLoggedIn()) {
+                ensureActiveAccessToken()
+                api.logout()
+            }
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (_: Exception) {
+            // Offline logout still clears local credentials; never wipe the outbox.
+        }
+    }
 
-    suspend fun logout() { logoutRemote(); clearSession() }
+    suspend fun logout() = uploadSyncMutex.withLock {
+        // No authentication mutation is allowed while an upload is in flight.
+        // Lock ordering matches login, avoiding deadlocks with Delta refresh.
+        accountScopeMutex.withLock {
+            logoutRemote()
+            clearSession()
+        }
+    }
 
     private fun classifySyncFailure(error: Exception) = when (error) {
         is PermanentSyncException -> com.example.data.OfflineSyncIssue("needs_review", error.message ?: "تحتاج القراءة إلى مراجعة الفني.")

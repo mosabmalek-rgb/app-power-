@@ -68,7 +68,17 @@ android {
     compose = true
     buildConfig = true
   }
-  testOptions { unitTests { isIncludeAndroidResources = true } }
+  testOptions {
+    unitTests {
+      isIncludeAndroidResources = true
+      all {
+        // Robolectric downloads Android runtime jars independently of Gradle.
+        // Use Maven Central's canonical endpoint instead of repo1.maven.org
+        // to avoid the class-wide MavenArtifactFetcher connection failures.
+        it.systemProperty("robolectric.dependency.repo.url", "https://repo.maven.apache.org/maven2")
+      }
+    }
+  }
   dependenciesInfo {
     includeInApk = false
     includeInBundle = true

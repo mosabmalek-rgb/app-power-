@@ -3,6 +3,8 @@ package com.example
 import com.example.data.OfflineSyncPolicy
 import com.example.data.ReadingValuePrecision
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class OfflineSyncPolicyTest {
@@ -23,6 +25,16 @@ class OfflineSyncPolicyTest {
         assertEquals(null, ReadingValuePrecision.normalizeForSync(Double.NaN, "NaN"))
         assertEquals("128", ReadingValuePrecision.normalizeForSync(128.0))
         assertEquals("128.52", ReadingValuePrecision.normalizeForSync(128.52))
+    }
+
+    @Test
+    fun `auth failures abort entire upload batch rather than damaging reading status`() {
+        assertTrue(OfflineSyncPolicy.mustAbortBatchAndQuarantine(401))
+        assertTrue(OfflineSyncPolicy.mustAbortBatchAndQuarantine(403))
+        for (code in listOf(400, 404, 409, 422, 429, 500, 503)) {
+            assertFalse("non-auth status $code must not revoke cached scope",
+                OfflineSyncPolicy.mustAbortBatchAndQuarantine(code))
+        }
     }
 
     @Test

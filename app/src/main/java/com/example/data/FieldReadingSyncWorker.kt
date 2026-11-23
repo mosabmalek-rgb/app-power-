@@ -13,13 +13,27 @@ import androidx.work.WorkerParameters
 import androidx.work.ExistingPeriodicWorkPolicy
 import com.example.data.repository.FieldReadingRepository
 import java.util.concurrent.TimeUnit
+import retrofit2.HttpException
+import com.example.data.OfflineSyncPolicy
+
+/** Code-level retry boundary: authorization denial needs user action, not a tight loop. */
+internal object FieldSyncWorkRetryPolicy {
+    fun shouldRetry(error: Throwable): Boolean =
+        error !is HttpException ||
+            !OfflineSyncPolicy.mustAbortBatchAndQuarantine(error.code())
+}
 
 class FieldReadingSyncWorker(appContext: Context, params: WorkerParameters) : CoroutineWorker(appContext, params) {
     override suspend fun doWork(): Result {
         val repository = FieldReadingRepository(applicationContext, FieldReadingDatabase.getDatabase(applicationContext).dao())
         return repository.syncAllData { _, _ -> }.fold(
             onSuccess = { summary -> if (summary.retryable > 0) Result.retry() else Result.success() },
-            onFailure = { Result.retry() }
+            onFailure = { error ->
+                // Keep the outbox intact. A 401/403 must wait for renewed
+                // authorization; other transient failures use WorkManager backoff.
+                if (FieldSyncWorkRetryPolicy.shouldRetry(error)) Result.retry()
+                else Result.failure()
+            }
         )
     }
 

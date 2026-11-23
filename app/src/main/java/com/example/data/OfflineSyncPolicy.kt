@@ -29,6 +29,13 @@ object ReadingValuePrecision {
 }
 
 object OfflineSyncPolicy {
+    /**
+     * A revoked mobile session or tenant/branch entitlement terminates the
+     * complete upload batch. It must not be handled as a per-reading error.
+     */
+    fun mustAbortBatchAndQuarantine(httpStatus: Int): Boolean =
+        httpStatus == 401 || httpStatus == 403
+
     fun forHttpStatus(statusCode: Int, errorCode: String? = null): OfflineSyncIssue {
         if (statusCode == 409 && errorCode == "READING_ALREADY_EXISTS_IN_CYCLE") {
             return OfflineSyncIssue(
