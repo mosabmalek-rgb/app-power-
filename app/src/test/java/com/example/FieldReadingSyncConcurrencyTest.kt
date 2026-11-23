@@ -5,6 +5,8 @@ import android.util.Base64
 import androidx.room.Room
 import androidx.test.core.app.ApplicationProvider
 import com.example.data.FieldReadingDatabase
+import com.example.data.SubscriberCacheTrust
+import com.example.data.SubscriberEntity
 import com.example.data.PendingPaymentEntity
 import com.example.data.PendingReadingEntity
 import com.example.data.api.FieldReadingApi
@@ -31,12 +33,16 @@ import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.async
 import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withTimeout
 import org.junit.After
 import org.junit.Assert.*
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
+import retrofit2.HttpException
+import retrofit2.Response
+import okhttp3.ResponseBody.Companion.toResponseBody
 
 /**
  * Local-only integration against the REAL repository + Room, with a synthetic
@@ -61,6 +67,7 @@ class FieldReadingSyncConcurrencyTest {
     private val heldAck = CompletableDeferred<MobileReadingResponse>()
     @Volatile private var replyImmediatelyAfterFirst = false
     @Volatile private var failDelta = false
+    @Volatile private var revokeDelta = false
     private val postedKeys = java.util.Collections.synchronizedList(mutableListOf<String>())
 
     private fun authenticate() {
@@ -108,6 +115,11 @@ class FieldReadingSyncConcurrencyTest {
                 )
             )
             "getSubscribersDelta" -> {
+                if (revokeDelta) {
+                    throw HttpException(Response.error<Any>(
+                        403, """{"error":{"code":"BRANCH_ACCESS_DENIED"}}""".toResponseBody()
+                    ))
+                }
                 if (failDelta) throw java.io.IOException("synthetic Delta outage")
                 val number = deltaCalls.incrementAndGet()
                 val bootstrap = args!![3] == "true"
@@ -281,6 +293,81 @@ class FieldReadingSyncConcurrencyTest {
         assertFalse("no 100% before successful Delta", progress.contains(100))
         val confirmed = db.dao().getPendingReadingsWithStatus("synced").single()
         assertEquals(operationKey, confirmed.clientReferenceId)
+        assertEquals(1, calls.get())
+    }
+
+    @Test fun manualRefreshWaitsForWorkerUploadAndCannotPublishMidFlight() = runBlocking {
+        authenticate()
+        seedPendingReading()
+        val api = fakeApi()
+        val worker = repository(api)
+        val screen = repository(api)
+        val runningUpload = async { worker.syncAllData { _, _ -> } }
+        withTimeout(10000) { seenUpload.await() }
+        val manualRefresh = async(start = CoroutineStart.UNDISPATCHED) {
+            screen.refreshSubscribers()
+        }
+        assertFalse("manual Delta must wait for in-flight upload", manualRefresh.isCompleted)
+        assertEquals(0, deltaCalls.get())
+
+        heldAck.complete(MobileReadingResponse(100L, "accepted", null, false))
+        assertTrue(withTimeout(15000) { runningUpload.await() }.isSuccess)
+        assertTrue(withTimeout(15000) { manualRefresh.await() }.isSuccess)
+        assertEquals(1, calls.get())
+        assertEquals("upload and then manual refresh", 2, deltaCalls.get())
+        assertEquals(0, db.dao().anyReadingCount())
+    }
+
+    @Test fun revokedBranchDuringManualDeltaQuarantinesCacheButPreservesOfflineWork() = runBlocking {
+        authenticate()
+        val subscriber = SubscriberEntity(
+            id = "15", refNumber = "S15", name = "Local", phone = "",
+            address = "", branchId = "7", lastReading = 5.0,
+            lastReadingDate = "", balance = 0.0
+        )
+        db.dao().insertSubscribers(listOf(subscriber))
+        seedPendingReading()
+        db.dao().insertPendingPayment(PendingPaymentEntity(
+            subscriberId = "15", amount = 12.0, paymentMethod = "CASH",
+            notes = "", status = "pending", clientReferenceId = "payment-stable"
+        ))
+        revokeDelta = true
+        val repo = repository(fakeApi())
+        val result = withTimeout(15000) { repo.refreshSubscribers() }
+        assertTrue(result.isFailure)
+        val trust = SubscriberCacheTrust(prefs)
+        assertTrue("quarantine must survive repository recreation", trust.isQuarantined())
+        assertTrue("UI subscriber data must be invisible", repo.subscribersFlow.first().isEmpty())
+        assertTrue(repo.pendingReadingsFlow.first().isEmpty())
+        assertTrue(repo.pendingPaymentsFlow.first().isEmpty())
+        assertEquals(operationKey,
+            db.dao().getPendingReadingsWithStatus("pending").single().clientReferenceId)
+        assertEquals("payment-stable",
+            db.dao().getPendingPaymentsWithStatus("pending").single().clientReferenceId)
+        assertEquals("Local", db.dao().getSubscriberById("15")?.name)
+        val afterRestart = repository(fakeApi())
+        assertTrue(afterRestart.subscribersFlow.first().isEmpty())
+    }
+
+    @Test fun cancelledManualRefreshWaitingOnUploadNeverRunsDelta() = runBlocking {
+        authenticate()
+        seedPendingReading()
+        val api = fakeApi()
+        val worker = repository(api)
+        val manual = repository(api)
+        val runningUpload = async { worker.syncAllData { _, _ -> } }
+        withTimeout(10000) { seenUpload.await() }
+        val pendingManual = async(start = CoroutineStart.UNDISPATCHED) {
+            manual.refreshSubscribers()
+        }
+        assertFalse(pendingManual.isCompleted)
+        pendingManual.cancelAndJoin()
+        assertTrue(pendingManual.isCancelled)
+        assertEquals(0, deltaCalls.get())
+
+        heldAck.complete(MobileReadingResponse(100L, "accepted", null, false))
+        assertTrue(withTimeout(15000) { runningUpload.await() }.isSuccess)
+        assertEquals("only uploader Delta reached API", 1, deltaCalls.get())
         assertEquals(1, calls.get())
     }
 
