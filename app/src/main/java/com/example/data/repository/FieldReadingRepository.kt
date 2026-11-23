@@ -441,7 +441,14 @@ class FieldReadingRepository(
         true
     }
 
+    // Public/manual refresh shares the upload gate with WorkManager. Otherwise a
+    // concurrent branch/permission change can publish Delta during an HTTP upload.
+    // Lock order stays uploadSyncMutex -> accountScopeMutex (login/logout too).
     suspend fun refreshSubscribers(): Result<Unit> =
+        uploadSyncMutex.withLock { refreshSubscribersWithinUploadLock() }
+
+    // Called only by a holder of uploadSyncMutex; never reacquire that mutex.
+    private suspend fun refreshSubscribersWithinUploadLock(): Result<Unit> =
         accountScopeMutex.withLock { runCatching {
         ensureActiveAccessToken()
         val profile = api.getProfile().user
@@ -522,7 +529,7 @@ class FieldReadingRepository(
             if (readings.isEmpty()) {
                 // Subscription, branch and session are rechecked by refreshSubscribers().
                 // WorkManager must still poll for remote changes when no readings were created.
-                refreshSubscribers().getOrThrow()
+                refreshSubscribersWithinUploadLock().getOrThrow()
                 val summary = SyncSummary(0, 0, 0)
                 queueSyncEvent(branchId, "sync_cycle", "success", summary)
                 return@runCatching summary
@@ -595,16 +602,13 @@ class FieldReadingRepository(
             // The download is part of this sync attempt. If it fails, return an
             // explicit retryable failure; do not falsely claim complete synchronization.
             // All posted readings remain idempotent by clientOperationId.
-            refreshSubscribers().getOrThrow()
+            refreshSubscribersWithinUploadLock().getOrThrow()
             val summary = SyncSummary(synced, retryable, needsReview)
             queueSyncEvent(branchId, "sync_cycle", when { needsReview > 0 -> "needs_review"; retryable > 0 -> "partial"; else -> "success" }, summary)
-            // Signal completion only AFTER the server-authoritative Delta download.
-            // A failed/cancelled Delta must never display a misleading 100% success.
-            onProgress(100, "اكتملت دورة المزامنة: $synced قراءة ناجحة، $retryable لإعادة المحاولة، $needsReview للمراجعة.")
-            // Only the fully completed and authenticated upload + Delta cycle may
-            // compact acknowledged readings. Unsent/retryable/needs_review are never
-            // eligible for this query, and their clientReferenceId stays unchanged.
+            // Compact only after verified Delta and persisted sync event. Do not
+            // announce 100% if the final local cleanup fails.
             if (synced > 0) dao.clearSyncedReadings()
+            onProgress(100, "اكتملت دورة المزامنة: $synced قراءة ناجحة، $retryable لإعادة المحاولة، $needsReview للمراجعة.")
             summary
         }
         outcome.exceptionOrNull()?.let { failure ->
