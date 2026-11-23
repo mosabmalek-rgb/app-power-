@@ -602,7 +602,17 @@ class FieldReadingRepository(
             if (synced > 0) dao.clearSyncedReadings()
             summary
         }
-        outcome.exceptionOrNull()?.let { if (it is CancellationException) throw it }
+        outcome.exceptionOrNull()?.let { failure ->
+            if (failure is CancellationException) throw failure
+            // Authentication may also be rejected before the first reading upload
+            // by token refresh or sync-event delivery. Persist cache quarantine
+            // regardless of which step raised the 401/403.
+            if (failure is HttpException &&
+                OfflineSyncPolicy.mustAbortBatchAndQuarantine(failure.code())) {
+                cacheVisibility.value = false
+                subscriberCacheTrust.quarantine()
+            }
+        }
         if (outcome.isFailure &&
             currentCacheScope() == originalScope &&
             currentMobileSessionKey() == originalSession &&
