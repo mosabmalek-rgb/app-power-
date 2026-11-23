@@ -452,12 +452,33 @@ class FieldReadingRepository(
         accountScopeMutex.withLock { runCatching {
         ensureActiveAccessToken()
         val profile = api.getProfile().user
-        val branchId = activeBranchId().takeIf { it in profile.branchIds }
-            ?: profile.branchIds.firstOrNull()
-            ?: throw IllegalStateException("لا توجد فروع ميدانية مسموحة لهذا الحساب.")
-        val scope = localScope(profile.id, profile.tenantId, branchId)
         val authenticatedSessionKey = currentMobileSessionKey()
-            ?: throw IllegalStateException("Mobile session identity is unavailable")
+        val sessionParts = authenticatedSessionKey?.split(':')
+        // Do not accept even a 200 profile for another tenant/user. Verify BEFORE
+        // clearing or binding Room, so forged/stale profile data cannot migrate the cache.
+        if (sessionParts?.size != 3 ||
+            sessionParts[0].toLongOrNull() != profile.tenantId ||
+            sessionParts[1].toLongOrNull() != profile.id) {
+            cacheVisibility.value = false
+            subscriberCacheTrust.quarantine()
+            error("Server profile does not match the current mobile session")
+        }
+        val selectedBranch = activeBranchId()
+        if (selectedBranch > 0 && selectedBranch !in profile.branchIds) {
+            // A 200 response can remove a branch without returning HTTP 403.
+            // Persist the denial before attempting to rebind: pending offline
+            // work can block a branch change and must never be deleted.
+            cacheVisibility.value = false
+            subscriberCacheTrust.quarantine()
+        }
+        val branchId = selectedBranch.takeIf { it in profile.branchIds }
+            ?: profile.branchIds.firstOrNull()
+            ?: run {
+                cacheVisibility.value = false
+                subscriberCacheTrust.quarantine()
+                error("No authorized mobile branches remain for this account")
+            }
+        val scope = localScope(profile.id, profile.tenantId, branchId)
         bindSubscriberScope(scope)
         prefs.edit().putLong("profile_user_id", profile.id)
             .putLong("profile_tenant_id", profile.tenantId)
