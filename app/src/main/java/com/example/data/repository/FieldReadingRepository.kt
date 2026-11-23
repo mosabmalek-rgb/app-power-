@@ -61,6 +61,21 @@ class FieldReadingRepository(
      * user, tenant and branch; otherwise do not guess its original owner.
      * The server verifies the access token on the following profile request.
      */
+    private fun currentMobileSessionKey(): String? {
+        val access = sessionStore.accessToken() ?: return null
+        val encoded = access.split('.').getOrNull(1) ?: return null
+        val decoded = runCatching {
+            val bytes = android.util.Base64.decode(encoded,
+                android.util.Base64.URL_SAFE or android.util.Base64.NO_WRAP or android.util.Base64.NO_PADDING)
+            JSONObject(String(bytes, Charsets.UTF_8))
+        }.getOrNull() ?: return null
+        val tenant = decoded.optLong("tenantId", -1L)
+        val session = decoded.optLong("sessionId", -1L)
+        val user = decoded.optString("sub").toLongOrNull() ?: -1L
+        if (tenant <= 0 || session <= 0 || user <= 0) return null
+        return "$tenant:$user:$session"
+    }
+
     private fun isSameLegacySession(userId: Long, tenantId: Long, branchId: Long): Boolean {
         if (!sessionStore.isLoggedIn() ||
             prefs.getLong("profile_user_id", -1L) != userId ||
@@ -386,6 +401,8 @@ class FieldReadingRepository(
             ?: profile.branchIds.firstOrNull()
             ?: throw IllegalStateException("لا توجد فروع ميدانية مسموحة لهذا الحساب.")
         val scope = localScope(profile.id, profile.tenantId, branchId)
+        val authenticatedSessionKey = currentMobileSessionKey()
+            ?: throw IllegalStateException("Mobile session identity is unavailable")
         bindSubscriberScope(scope)
         prefs.edit().putLong("profile_user_id", profile.id)
             .putLong("profile_tenant_id", profile.tenantId)
@@ -400,6 +417,7 @@ class FieldReadingRepository(
             assertActiveScope = {
                 check(sessionStore.isLoggedIn() &&
                     currentCacheScope() == scope &&
+                    currentMobileSessionKey() == authenticatedSessionKey &&
                     prefs.getString("subscriber_cache_scope", null) == scope) {
                     "Local account or branch changed during Delta sync"
                 }
