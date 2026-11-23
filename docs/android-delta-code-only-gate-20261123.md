@@ -165,3 +165,23 @@ tables are untouched.
   must remain Draft unless an explicit separate merge/release decision is made.
   Cross-system server-side idempotency and real-network/device behavior remain
   outside this acceptance scope.
+
+## Final PR #17 pre-merge: old-platform compatibility
+The Android branch can be merged independently of platform PR #359 only if
+the server remains compatible. At review time, platform `main` has
+`GET /api/mobile/v1/subscribers` but not the E51 `/subscribers/delta`
+route; the latter remains in open Draft PR #359.
+
+The repository therefore uses Delta when available, and falls back **only
+on HTTP 404 from the Delta route** to the existing cursor-paginated subscriber
+endpoint. All pages must validate branch, ID uniqueness, cursor progression,
+and authenticated scope. They are staged in application memory and published
+as a single Room transaction through `publishLegacySnapshot`, which resets
+Delta cursor/stage atomically. Any interrupted/invalid page leaves published
+rows and the offline Outbox untouched. 401/403, failed parsing and other
+network failures never trigger this downgrade. When the server gains Delta,
+the next refresh reboots from the cleared Delta cursor.
+
+This is a code compatibility gate, not a live HTTP claim. New tests in
+`FieldReadingSyncConcurrencyTest` cover old-only success, failed second page,
+and repeated subscriber IDs. PR #359 remains separate and unmerged.
